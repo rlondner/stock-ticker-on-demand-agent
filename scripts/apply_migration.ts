@@ -17,7 +17,7 @@ for (const f of files) {
   const stmt = readFileSync(join(dir, f), "utf8");
   // Neon HTTP driver doesn't support multi-statement; split on ;
   for (const part of stmt.split(/;\s*$/m).map(s => s.trim()).filter(Boolean)) {
-    await sql(part);
+    await sql.query(part);
   }
 }
 console.log("Done.");
