@@ -26,10 +26,27 @@ def init_observability(job_id: str) -> None:
     # Always log spans to stdout in addition to any exporters (Daytona captures stdout).
     provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))
 
-    # Sentry exporter - wired in Task 18
     # Datadog exporter - wired in Task 19
 
     trace.set_tracer_provider(provider)
+
+    # === Sentry exporter ===
+    # Sentry Python SDK v2+ integrates with OTel via SentrySpanProcessor +
+    # SentryPropagator — spans created on the OTel TracerProvider are forwarded
+    # to Sentry automatically. No application code touches sentry_sdk directly.
+    dsn = os.environ.get("SENTRY_DSN_AGENT")
+    if dsn:
+        import sentry_sdk
+        from sentry_sdk.integrations.opentelemetry import SentrySpanProcessor, SentryPropagator
+        sentry_sdk.init(
+            dsn=dsn,
+            traces_sample_rate=1.0,
+            environment=os.environ.get("DD_ENV", "development"),
+        )
+        provider.add_span_processor(SentrySpanProcessor())
+        propagate.set_global_textmap(SentryPropagator())
+        global _sentry_inited
+        _sentry_inited = True
 
     # Continue the W3C trace from the parent (NextJS) if TRACEPARENT was passed.
     traceparent = os.environ.get("TRACEPARENT")
@@ -53,4 +70,10 @@ def flush_observability(timeout_s: float = 5.0) -> None:
             tp.shutdown()
         except Exception:
             pass
-    # Sentry / Datadog flush wired in Tasks 18 / 19.
+
+    if _sentry_inited:
+        try:
+            import sentry_sdk
+            sentry_sdk.flush(timeout=timeout_s)
+        except Exception:
+            pass

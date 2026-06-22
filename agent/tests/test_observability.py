@@ -20,3 +20,11 @@ def test_flush_without_exporters_is_no_op(monkeypatch):
     monkeypatch.setenv("JOB_ID", "job-3")
     init_observability(job_id="job-3")
     flush_observability(timeout_s=1.0)
+
+def test_init_with_sentry_dsn_does_not_crash(monkeypatch):
+    monkeypatch.setenv("SENTRY_DSN_AGENT", "https://public@o0.ingest.sentry.io/0")
+    monkeypatch.setenv("JOB_ID", "job-sentry")
+    import importlib, lib.observability as o
+    importlib.reload(o)
+    o.init_observability(job_id="job-sentry")
+    o.flush_observability(timeout_s=1.0)
