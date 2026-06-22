@@ -1,0 +1,27 @@
+# Node
+node_modules/
+.next/
+out/
+.turbo/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+
+# roborev snapshots
+/.roborev/
