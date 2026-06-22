@@ -26,8 +26,6 @@ def init_observability(job_id: str) -> None:
     # Always log spans to stdout in addition to any exporters (Daytona captures stdout).
     provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))
 
-    # Datadog exporter - wired in Task 19
-
     trace.set_tracer_provider(provider)
 
     # === Sentry exporter ===
@@ -47,6 +45,17 @@ def init_observability(job_id: str) -> None:
         propagate.set_global_textmap(SentryPropagator())
         global _sentry_inited
         _sentry_inited = True
+
+    # === Datadog exporter ===
+    dd_key = os.environ.get("DD_API_KEY")
+    if dd_key:
+        import ddtrace
+        ddtrace.config.service = os.environ.get("DD_SERVICE", "stock-agent")
+        ddtrace.config.env = os.environ.get("DD_ENV", "development")
+        os.environ.setdefault("DD_TRACE_OTEL_ENABLED", "true")
+        ddtrace.patch_all(httpx=True, psycopg=True, openai=True, logging=True)
+        global _dd_inited
+        _dd_inited = True
 
     # Continue the W3C trace from the parent (NextJS) if TRACEPARENT was passed.
     traceparent = os.environ.get("TRACEPARENT")
@@ -75,5 +84,12 @@ def flush_observability(timeout_s: float = 5.0) -> None:
         try:
             import sentry_sdk
             sentry_sdk.flush(timeout=timeout_s)
+        except Exception:
+            pass
+
+    if _dd_inited:
+        try:
+            import ddtrace
+            ddtrace.tracer.shutdown(timeout=timeout_s)
         except Exception:
             pass
