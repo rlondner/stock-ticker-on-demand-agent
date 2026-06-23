@@ -19,6 +19,7 @@ def main() -> None:
 
     with tracer.start_as_current_span("agent.run") as span:
         span.set_attribute("job_id", JOB_ID)
+        job = None
         try:
             job = get_job(JOB_ID)
             if job is None or job["status"] != "pending":
@@ -38,7 +39,10 @@ def main() -> None:
         finally:
             flush_observability()
             try:
-                self_delete()
+                # Prefer the sandbox_id from the job row (written by NextJS after dt.create).
+                # Fall back to the env var inside self_delete() for any custom setup.
+                sandbox_id = (job["sandbox_id"] if job and "sandbox_id" in job else None)
+                self_delete(sandbox_id=sandbox_id)
             except Exception:
                 pass
 

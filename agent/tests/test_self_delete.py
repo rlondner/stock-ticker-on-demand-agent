@@ -25,3 +25,13 @@ def test_self_delete_no_op_when_sandbox_id_unset(monkeypatch):
     with patch("httpx.delete") as mock_del:
         self_delete()
         mock_del.assert_not_called()
+
+def test_self_delete_uses_parameter_when_provided(monkeypatch):
+    monkeypatch.setenv("DAYTONA_API_KEY", "dt-test")
+    monkeypatch.delenv("DAYTONA_SANDBOX_ID", raising=False)
+    fake = MagicMock(status_code=200)
+    with patch("httpx.delete", return_value=fake) as mock_del:
+        self_delete(sandbox_id="sb-from-param")
+        mock_del.assert_called_once()
+        url = mock_del.call_args.args[0]
+        assert "sb-from-param" in url

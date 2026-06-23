@@ -32,3 +32,18 @@ def test_parse_response_extracts_json():
 def test_parse_response_rejects_malformed():
     with pytest.raises(ValueError):
         parse_response("not json")
+
+def test_parse_response_handles_json_fence():
+    payload = '```json\n{"recommendation":"buy","summary":"x","signals":[]}\n```'
+    a = parse_response(payload)
+    assert a.recommendation == "buy"
+
+def test_parse_response_handles_bare_fence():
+    payload = '```\n{"recommendation":"hold","summary":"x","signals":[]}\n```'
+    a = parse_response(payload)
+    assert a.recommendation == "hold"
+
+def test_parse_response_handles_inline_fence():
+    payload = '```{"recommendation":"sell","summary":"x","signals":[]}```'
+    a = parse_response(payload)
+    assert a.recommendation == "sell"

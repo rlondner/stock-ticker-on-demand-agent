@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from typing import Protocol
 from pydantic import BaseModel, Field
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
@@ -23,9 +24,10 @@ class LLMClient(Protocol):
 def parse_response(raw: str) -> Analysis:
     """Strip optional markdown fences, parse JSON, validate."""
     cleaned = raw.strip()
-    if cleaned.startswith("```"):
-        cleaned = cleaned.strip("`")
-        cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned
+    # Strip ```json\n...\n``` or ```\n...\n``` fences.
+    fenced = re.match(r"^```(?:json)?\s*\n?(.*?)\n?```$", cleaned, re.DOTALL)
+    if fenced:
+        cleaned = fenced.group(1).strip()
     try:
         data = json.loads(cleaned)
     except json.JSONDecodeError as e:
