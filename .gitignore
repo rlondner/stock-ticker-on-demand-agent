@@ -25,3 +25,6 @@ Thumbs.db
 
 # roborev snapshots
 /.roborev/
+
+# Local agent runs
+agent/.runs/
