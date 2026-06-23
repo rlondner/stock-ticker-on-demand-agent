@@ -3,7 +3,8 @@
 Usage:
     python analyze.py <TICKER> [--no-wait]
 
-Requires NEON_DATABASE_URL and OPENAI_API_KEY in the environment.
+Loads env vars from <repo>/.env automatically (shell vars take precedence).
+NEON_DATABASE_URL and OPENAI_API_KEY must be present in either.
 """
 import argparse
 import json
@@ -11,8 +12,14 @@ import os
 import re
 import sys
 import time
+from pathlib import Path
+
+from dotenv import load_dotenv
 
 from lib.db import _conn
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+DOTENV_PATH = REPO_ROOT / ".env"
 
 TICKER_RE = re.compile(r"^[A-Z]{1,5}$")
 
@@ -46,16 +53,19 @@ def main() -> int:
     parser.add_argument("--no-wait", action="store_true", help="exit immediately after agent.main() returns")
     args = parser.parse_args()
 
+    # Load env vars from <repo>/.env. override=False means existing shell vars win.
+    load_dotenv(DOTENV_PATH, override=False)
+
     ticker = args.ticker.strip()
     if not TICKER_RE.match(ticker):
         print(f"invalid ticker {ticker!r}: must match {TICKER_RE.pattern}", file=sys.stderr)
         return 2
 
     if "NEON_DATABASE_URL" not in os.environ:
-        print("NEON_DATABASE_URL is required", file=sys.stderr)
+        print(f"NEON_DATABASE_URL not found in environment or {DOTENV_PATH}", file=sys.stderr)
         return 2
     if "OPENAI_API_KEY" not in os.environ:
-        print("OPENAI_API_KEY is required", file=sys.stderr)
+        print(f"OPENAI_API_KEY not found in environment or {DOTENV_PATH}", file=sys.stderr)
         return 2
 
     job_id = insert_pending(ticker)
