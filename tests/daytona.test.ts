@@ -27,6 +27,8 @@ describe("spawnAnalysisSandbox", () => {
     delete process.env.SENTRY_DSN_AGENT;
     delete process.env.DD_API_KEY;
     delete process.env.DD_TRACE_ENABLED;
+    delete process.env.DD_EXPORTER;
+    delete process.env.DD_OTLP_ENDPOINT;
     createMock.mockClear();
   });
 
@@ -96,5 +98,17 @@ describe("spawnAnalysisSandbox", () => {
     span.end();
     const call = createMock.mock.calls.at(-1)![0] as any;
     expect(call.envVars.DD_TRACE_ENABLED).toBe("false");
+  });
+
+  it("forwards DD_EXPORTER and DD_OTLP_ENDPOINT only when set", async () => {
+    process.env.DD_EXPORTER = "otlp";
+    process.env.DD_OTLP_ENDPOINT = "https://trace.agent.datadoghq.com/v1/traces";
+    const { spawnAnalysisSandbox } = await import("@/lib/daytona");
+    const span = trace.getTracer("t").startSpan("p");
+    await spawnAnalysisSandbox("job-dd-otlp", span);
+    span.end();
+    const call = createMock.mock.calls.at(-1)![0] as any;
+    expect(call.envVars.DD_EXPORTER).toBe("otlp");
+    expect(call.envVars.DD_OTLP_ENDPOINT).toBe("https://trace.agent.datadoghq.com/v1/traces");
   });
 });

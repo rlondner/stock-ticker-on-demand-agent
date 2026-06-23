@@ -106,6 +106,8 @@ Set `AGENT_RUNTIME=subprocess` in `.env` to skip Daytona entirely (see *HOW-TO: 
 | `DD_SERVICE` | Service name in Datadog. `stock-agent-frontend` for NextJS; `stock-agent` is forced inside the sandbox. |
 | `DD_ENV` | `development` / `staging` / `production` |
 | `DD_TRACE_ENABLED` | `false` short-circuits dd-trace initialization (NextJS + agent). Use when running locally without a Datadog Agent on `localhost:8126` to silence the "failed to send, dropping N traces" warnings. Leave unset/`true` to ship traces. |
+| `DD_EXPORTER` | **Python agent only.** `agent` (default) → ddtrace + local Datadog Agent on `localhost:8126`. `otlp` → OTLP HTTP exporter ships directly to Datadog's intake (no Agent needed — ideal for Daytona sandboxes). With `otlp`, you lose ddtrace's auto-instrumentation (httpx/psycopg/openai/logging) and only the explicit OTel spans we create get shipped. NextJS continues to use dd-trace regardless. |
+| `DD_OTLP_ENDPOINT` | Required when `DD_EXPORTER=otlp`. The exact OTLP HTTP intake URL (Datadog has shifted this path across documentation versions — copy it from your account's OTLP-ingest page). The agent posts span batches to this URL with a `DD-API-KEY` header. |
 
 ## HOW-TO: Provision Neon
 
@@ -233,6 +235,29 @@ For endpoints that don't implement the Responses API (Ollama, vLLM, LiteLLM, Ope
 3. Restart `pnpm dev`.
 4. Submit a ticker. In Datadog APM → Service Catalog you should see `stock-agent-frontend` and (once the agent runs) `stock-agent` with a unified trace tying them together via the W3C `traceparent`.
 5. Custom span attributes (`tokens_in`, `tokens_out`, `cost_usd`, `ticker`, `recommendation`) appear as tags on each span.
+
+### Datadog transport: Agent vs. OTLP direct
+
+`dd-trace` defaults to shipping traces to a local Datadog Agent on `localhost:8126`. Three choices for where that Agent lives:
+
+| Choice | When | What to set |
+|---|---|---|
+| Local Agent | You run `gcr.io/datadoghq/agent` via Docker, or install the Agent on your host | Default. No extra env vars. |
+| Remote shared Agent | You host one Agent (a small VM, Fly machine, ECS task) that all sandboxes ship to | `DD_AGENT_HOST=<host>` + `DD_TRACE_AGENT_PORT=8126`. *Not yet forwarded into the sandbox env — add `forwardIfSet` calls in `lib/daytona.ts` if you go this route.* |
+| **No Agent (OTLP direct)** | You don't want to host any Agent. Works inside Daytona sandboxes too. **Python agent only — NextJS still uses dd-trace.** | `DD_EXPORTER=otlp` + `DD_OTLP_ENDPOINT=<your Datadog OTLP HTTP intake URL>` |
+
+**To run the Python agent without any Datadog Agent:**
+
+1. Set in `.env`:
+   ```
+   DD_API_KEY=…
+   DD_SITE=datadoghq.com
+   DD_EXPORTER=otlp
+   DD_OTLP_ENDPOINT=<copy the exact URL from Datadog's "OpenTelemetry → Direct ingest" docs for your account>
+   ```
+2. Restart `pnpm dev`. The Python agent will register an OTLP HTTP span exporter (with a `DD-API-KEY` header) instead of calling `ddtrace.patch_all()`.
+3. **Trade-off:** in OTLP mode, only the explicit OTel spans the agent creates (`agent.run`, `llm.analyze`) reach Datadog. dd-trace's auto-instrumentation (httpx, psycopg, openai, logging) is skipped. You see fewer spans per trace; the parent/child structure is the same.
+4. To test both transports locally, leave `DD_EXPORTER` unset while you have an Agent on `localhost:8126`, then flip to `DD_EXPORTER=otlp` to verify the agentless path.
 
 ## HOW-TO: Enable both
 

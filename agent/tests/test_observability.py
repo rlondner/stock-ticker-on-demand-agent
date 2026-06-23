@@ -70,3 +70,54 @@ def test_dd_trace_enabled_unset_still_inits(monkeypatch):
     # Default behavior preserved: with DD_API_KEY set and DD_TRACE_ENABLED unset, Datadog inits.
     assert o._dd_inited is True
     o.flush_observability(timeout_s=1.0)
+
+
+def test_dd_exporter_otlp_uses_otlp_path(monkeypatch):
+    monkeypatch.setenv("DD_API_KEY", "dd-test-key")
+    monkeypatch.setenv("DD_EXPORTER", "otlp")
+    monkeypatch.setenv("DD_OTLP_ENDPOINT", "https://trace.agent.datadoghq.com/v1/traces")
+    monkeypatch.delenv("DD_TRACE_ENABLED", raising=False)
+    monkeypatch.setenv("JOB_ID", "job-otlp")
+    import importlib, lib.observability as o
+    importlib.reload(o)
+    o.init_observability(job_id="job-otlp")
+    # OTLP path is active; ddtrace.patch_all path is NOT.
+    assert o._dd_otlp_inited is True
+    assert o._dd_inited is False
+    o.flush_observability(timeout_s=1.0)
+
+
+def test_dd_exporter_otlp_without_endpoint_raises(monkeypatch):
+    monkeypatch.setenv("DD_API_KEY", "dd-test-key")
+    monkeypatch.setenv("DD_EXPORTER", "otlp")
+    monkeypatch.delenv("DD_OTLP_ENDPOINT", raising=False)
+    monkeypatch.delenv("DD_TRACE_ENABLED", raising=False)
+    monkeypatch.setenv("JOB_ID", "job-otlp-no-endpoint")
+    import importlib, lib.observability as o
+    importlib.reload(o)
+    with pytest.raises(ValueError, match="DD_OTLP_ENDPOINT"):
+        o.init_observability(job_id="job-otlp-no-endpoint")
+
+
+def test_dd_exporter_unknown_value_raises(monkeypatch):
+    monkeypatch.setenv("DD_API_KEY", "dd-test-key")
+    monkeypatch.setenv("DD_EXPORTER", "kafka")
+    monkeypatch.setenv("JOB_ID", "job-bad-exporter")
+    import importlib, lib.observability as o
+    importlib.reload(o)
+    with pytest.raises(ValueError, match="DD_EXPORTER"):
+        o.init_observability(job_id="job-bad-exporter")
+
+
+def test_dd_exporter_agent_default_when_unset(monkeypatch):
+    monkeypatch.setenv("DD_API_KEY", "dd-test-key")
+    monkeypatch.delenv("DD_EXPORTER", raising=False)
+    monkeypatch.delenv("DD_TRACE_ENABLED", raising=False)
+    monkeypatch.setenv("JOB_ID", "job-default-exporter")
+    import importlib, lib.observability as o
+    importlib.reload(o)
+    o.init_observability(job_id="job-default-exporter")
+    # Unset DD_EXPORTER falls back to the agent path; OTLP path stays inactive.
+    assert o._dd_inited is True
+    assert o._dd_otlp_inited is False
+    o.flush_observability(timeout_s=1.0)

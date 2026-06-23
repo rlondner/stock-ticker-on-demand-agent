@@ -42,6 +42,8 @@ export async function spawnAnalysisSubprocess(
     ...forwardIfSet("OPENAI_USE_RESPONSES_API"),
     ...forwardIfSet("SENTRY_DSN_AGENT"),
     ...forwardIfSet("DD_TRACE_ENABLED"),
+    ...forwardIfSet("DD_EXPORTER"),
+    ...forwardIfSet("DD_OTLP_ENDPOINT"),
     ...datadogBlockIfEnabled(),
   };
   // Never forward Daytona credentials into a local subprocess.

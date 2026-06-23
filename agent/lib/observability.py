@@ -8,11 +8,12 @@ from opentelemetry.trace.status import Status, StatusCode
 _initialized = False
 _sentry_inited = False
 _dd_inited = False
+_dd_otlp_inited = False
 
 def init_observability(job_id: str) -> None:
     """Initialize OTel and any configured exporters (Sentry/Datadog).
     Idempotent - safe to call multiple times."""
-    global _initialized, _sentry_inited, _dd_inited
+    global _initialized, _sentry_inited, _dd_inited, _dd_otlp_inited
     if _initialized:
         return
 
@@ -47,19 +48,47 @@ def init_observability(job_id: str) -> None:
         _sentry_inited = True
 
     # === Datadog exporter ===
-    # dd-trace ships to a local Datadog Agent on localhost:8126 by default. If you're
-    # running the agent locally without an Agent, set DD_TRACE_ENABLED=false in .env
-    # to silence the "failed to send, dropping N traces" warnings.
+    # DD_EXPORTER picks how traces reach Datadog:
+    #   'agent' (default): ddtrace.patch_all → ships to a local Datadog Agent on
+    #     localhost:8126. Auto-instruments httpx/psycopg/openai/logging. Requires
+    #     an Agent reachable from this process. Set DD_TRACE_ENABLED=false to
+    #     short-circuit when no Agent is running.
+    #   'otlp': OTLP-HTTP exporter ships spans directly to Datadog's intake.
+    #     No Agent needed (good for Daytona sandboxes). Only the explicit OTel
+    #     spans we create get shipped — no auto-instrumented HTTP/DB/OpenAI spans.
+    #     Requires DD_OTLP_ENDPOINT (the exact intake URL from Datadog's docs)
+    #     and DD_API_KEY.
     dd_key = os.environ.get("DD_API_KEY")
     dd_disabled = os.environ.get("DD_TRACE_ENABLED", "").strip().lower() == "false"
+    dd_exporter = (os.environ.get("DD_EXPORTER") or "agent").strip().lower()
+    if dd_exporter not in ("agent", "otlp"):
+        raise ValueError(
+            f"DD_EXPORTER={dd_exporter!r} is not valid; expected 'agent' or 'otlp'"
+        )
     if dd_key and not dd_disabled:
-        import ddtrace
-        ddtrace.config.service = os.environ.get("DD_SERVICE", "stock-agent")
-        ddtrace.config.env = os.environ.get("DD_ENV", "development")
-        os.environ.setdefault("DD_TRACE_OTEL_ENABLED", "true")
-        ddtrace.patch_all(httpx=True, psycopg=True, openai=True, logging=True)
-        global _dd_inited
-        _dd_inited = True
+        if dd_exporter == "agent":
+            import ddtrace
+            ddtrace.config.service = os.environ.get("DD_SERVICE", "stock-agent")
+            ddtrace.config.env = os.environ.get("DD_ENV", "development")
+            os.environ.setdefault("DD_TRACE_OTEL_ENABLED", "true")
+            ddtrace.patch_all(httpx=True, psycopg=True, openai=True, logging=True)
+            global _dd_inited
+            _dd_inited = True
+        else:  # dd_exporter == "otlp"
+            otlp_endpoint = os.environ.get("DD_OTLP_ENDPOINT")
+            if not otlp_endpoint:
+                raise ValueError(
+                    "DD_EXPORTER=otlp requires DD_OTLP_ENDPOINT to be set to "
+                    "Datadog's OTLP HTTP intake URL (see your Datadog docs; "
+                    "the path has shifted across Datadog versions)"
+                )
+            from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+            provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(
+                endpoint=otlp_endpoint,
+                headers={"DD-API-KEY": dd_key},
+            )))
+            global _dd_otlp_inited
+            _dd_otlp_inited = True
 
     # Continue the W3C trace from the parent (NextJS) if TRACEPARENT was passed.
     traceparent = os.environ.get("TRACEPARENT")

@@ -28,6 +28,8 @@ describe("spawnAnalysisSubprocess", () => {
     delete process.env.SENTRY_DSN_AGENT;
     delete process.env.DD_API_KEY;
     delete process.env.DD_TRACE_ENABLED;
+    delete process.env.DD_EXPORTER;
+    delete process.env.DD_OTLP_ENDPOINT;
     delete process.env.DAYTONA_API_KEY;
     spawnMock.mockReset();
     spawnMock.mockReturnValue({ unref: unrefMock, pid: 9999 });
@@ -94,6 +96,18 @@ describe("spawnAnalysisSubprocess", () => {
     span.end();
     const opts = spawnMock.mock.calls.at(-1)![2];
     expect(opts.env.DD_TRACE_ENABLED).toBe("false");
+  });
+
+  it("forwards DD_EXPORTER and DD_OTLP_ENDPOINT only when set", async () => {
+    process.env.DD_EXPORTER = "otlp";
+    process.env.DD_OTLP_ENDPOINT = "https://trace.agent.datadoghq.com/v1/traces";
+    const { spawnAnalysisSubprocess } = await import("@/lib/runtime/subprocess");
+    const span = trace.getTracer("t").startSpan("p");
+    await spawnAnalysisSubprocess("job-dd-otlp", span);
+    span.end();
+    const opts = spawnMock.mock.calls.at(-1)![2];
+    expect(opts.env.DD_EXPORTER).toBe("otlp");
+    expect(opts.env.DD_OTLP_ENDPOINT).toBe("https://trace.agent.datadoghq.com/v1/traces");
   });
 
   it("never forwards DAYTONA_API_KEY", async () => {
