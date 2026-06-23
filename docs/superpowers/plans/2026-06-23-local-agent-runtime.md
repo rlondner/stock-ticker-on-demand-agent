@@ -46,7 +46,7 @@ Pull the W3C propagator, `forwardIfSet`, and `datadogBlockIfEnabled` out of `lib
 - [ ] **Step 1: Run existing daytona tests to confirm green baseline**
 
 Run: `pnpm test tests/daytona.test.ts`
-Expected: 5 tests pass.
+Expected: 7 tests pass.
 
 - [ ] **Step 2: Create the shared env helpers module**
 
@@ -130,7 +130,7 @@ export async function spawnAnalysisSandbox(jobId: string, parentSpan: Span): Pro
 - [ ] **Step 4: Run existing daytona tests to confirm refactor is behavior-preserving**
 
 Run: `pnpm test tests/daytona.test.ts`
-Expected: 5 tests pass.
+Expected: 7 tests pass.
 
 - [ ] **Step 5: Commit**
 
