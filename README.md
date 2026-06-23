@@ -63,10 +63,17 @@ All variables live in `.env`. `.env.example` is the source of truth — keep it 
 
 | Var | Source | Example | What breaks without it |
 |---|---|---|---|
-| `DAYTONA_API_KEY` | Daytona dashboard → API Keys | `dt_abc…` | Spawn fails → 500 on submit |
-| `DAYTONA_TARGET` | Daytona dashboard | `us` | Region defaults may misroute the spawn |
 | `NEON_DATABASE_URL` | Neon dashboard → Connection string | `postgresql://user:pass@ep-…neon.tech/neondb` | DB calls fail everywhere |
 | `OPENAI_API_KEY` | OpenAI dashboard → API Keys | `sk-proj-…` | Agent crashes when it tries to call the LLM |
+
+### Required when `AGENT_RUNTIME=daytona` (the default)
+
+| Var | Source | Example | What breaks without it |
+|---|---|---|---|
+| `DAYTONA_API_KEY` | Daytona dashboard → API Keys | `dt_abc…` | Spawn fails → 500 on submit |
+| `DAYTONA_TARGET` | Daytona dashboard | `us` | Region defaults may misroute the spawn |
+
+Set `AGENT_RUNTIME=subprocess` in `.env` to skip Daytona entirely (see *HOW-TO: Run the agent locally without Daytona* below).
 
 ### Optional — OpenAI-compatible endpoint
 
@@ -74,6 +81,12 @@ All variables live in `.env`. `.env.example` is the source of truth — keep it 
 |---|---|
 | `OPENAI_API_URL` | Override the OpenAI base URL to point at any OpenAI-compatible endpoint (Azure OpenAI, OpenRouter, vLLM, LiteLLM, local server, …). Unset → defaults to `https://api.openai.com/v1`. Forwarded into the sandbox only when set. |
 | `OPENAI_MODEL` | Override the model the agent calls. Unset → defaults to `gpt-4.1-mini`. Must be supported by whichever endpoint `OPENAI_API_URL` points at. Forwarded into the sandbox only when set. |
+
+### Optional — Agent runtime
+
+| Var | What it does |
+|---|---|
+| `AGENT_RUNTIME` | `daytona` (default) spawns the agent in a Daytona sandbox. `subprocess` runs the Python agent as a detached local child process (no Daytona account needed). Unknown values cause the API route to throw on the next submit. |
 
 ### Optional — Sentry block (omit entirely to disable Sentry)
 
@@ -106,6 +119,55 @@ All variables live in `.env`. `.env.example` is the source of truth — keep it 
    SELECT table_name FROM information_schema.tables WHERE table_schema='public';
    ```
    You should see `jobs`.
+
+## HOW-TO: Run the agent locally (without Daytona)
+
+For onboarding, demos behind a corporate firewall, or fast iteration on the Python agent without rebuilding the snapshot.
+
+1. Create a Python venv at `agent/.venv` and install the agent's deps:
+   ```powershell
+   cd agent
+   python -m venv .venv
+   .\.venv\Scripts\Activate.ps1
+   pip install -r requirements.txt
+   cd ..
+   ```
+   (POSIX: `python3 -m venv .venv` and `source .venv/bin/activate`.)
+
+2. In `.env`, set:
+   ```
+   AGENT_RUNTIME=subprocess
+   ```
+   You can leave `DAYTONA_API_KEY` and `DAYTONA_TARGET` blank in this mode.
+
+3. Run the app as usual:
+   ```powershell
+   pnpm dev
+   ```
+   Submit a ticker on `http://localhost:3000`. NextJS will spawn `python agent/agent.py` as a detached subprocess instead of calling Daytona. The job row gets `sandbox_id='local-<jobId>'` and the polling UI works unchanged.
+
+4. Agent logs go to `agent/.runs/<jobId>.log`. Tail one with:
+   ```powershell
+   Get-Content -Wait agent\.runs\<jobId>.log
+   ```
+   (POSIX: `tail -f agent/.runs/<jobId>.log`.)
+
+### Iterating on the agent without NextJS
+
+For Python-only iteration, use the standalone driver:
+
+```powershell
+cd agent
+.\.venv\Scripts\Activate.ps1
+python analyze.py AAPL
+```
+
+Or from the repo root:
+```powershell
+make agent-local TICKER=AAPL
+```
+
+The driver inserts a pending row, runs `agent.main()` in-process, and prints the final result row as JSON. Exit code is 0 on `complete`, 1 on `failed`, 2 on bad args.
 
 ## HOW-TO: Provision Daytona
 
