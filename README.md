@@ -81,6 +81,7 @@ Set `AGENT_RUNTIME=subprocess` in `.env` to skip Daytona entirely (see *HOW-TO: 
 |---|---|
 | `OPENAI_API_URL` | Override the OpenAI base URL to point at any OpenAI-compatible endpoint (Azure OpenAI, OpenRouter, vLLM, LiteLLM, local server, …). Unset → defaults to `https://api.openai.com/v1`. Forwarded into the sandbox only when set. |
 | `OPENAI_MODEL` | Override the model the agent calls. Unset → defaults to `gpt-4.1-mini`. Must be supported by whichever endpoint `OPENAI_API_URL` points at. Forwarded into the sandbox only when set. |
+| `OPENAI_USE_RESPONSES_API` | Unset or `true` (default): use OpenAI's Responses API + hosted `web_search` tool. `false`: use `chat.completions` without `web_search`. **Set this to `false` for any non-OpenAI endpoint** (Ollama, vLLM, LiteLLM, OpenRouter, Azure) — most only implement `/v1/chat/completions`. Without `web_search` the model relies on its training-cutoff knowledge of the ticker. Forwarded into the sandbox only when set. |
 
 ### Optional — Agent runtime
 
@@ -202,6 +203,8 @@ The driver inserts a pending row, runs `agent.main()` in-process, and prints the
 The agent uses the model `gpt-4.1-mini` by default with the `web_search` tool. Expected cost per analysis: ~$0.05–$0.20.
 
 To route requests to an OpenAI-compatible endpoint instead, set `OPENAI_API_URL` in `.env` (e.g. `https://my-proxy.example.com/v1`). The agent passes it as the SDK's `base_url`; the model name and `web_search` tool must be supported by the target endpoint. Set `OPENAI_MODEL` in `.env` to pick a different model (e.g. `gpt-4.1`, `gpt-4o`, or a model name your endpoint recognizes).
+
+For endpoints that don't implement the Responses API (Ollama, vLLM, LiteLLM, OpenRouter, Azure, …), also set `OPENAI_USE_RESPONSES_API=false`. The agent then uses `chat.completions` and drops the `web_search` tool — the model will rely on its training-cutoff knowledge of the ticker rather than live web data.
 
 ## HOW-TO: Enable Sentry only
 

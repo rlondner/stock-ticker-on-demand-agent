@@ -39,6 +39,7 @@ export async function spawnAnalysisSubprocess(
     TRACEPARENT: injectTraceparent(parentSpan),
     ...forwardIfSet("OPENAI_API_URL"),
     ...forwardIfSet("OPENAI_MODEL"),
+    ...forwardIfSet("OPENAI_USE_RESPONSES_API"),
     ...forwardIfSet("SENTRY_DSN_AGENT"),
     ...datadogBlockIfEnabled(),
   };

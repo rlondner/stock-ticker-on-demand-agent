@@ -1,7 +1,8 @@
 import json
+from unittest.mock import MagicMock, patch
 import pytest
 from pydantic import ValidationError
-from lib.llm import Analysis, Signal, parse_response
+from lib.llm import Analysis, OpenAIClient, Signal, _env_flag, parse_response
 
 def test_analysis_validates_buy_hold_sell():
     a = Analysis(recommendation="buy", summary="strong fundamentals", signals=[])
@@ -32,6 +33,110 @@ def test_parse_response_extracts_json():
 def test_parse_response_rejects_malformed():
     with pytest.raises(ValueError):
         parse_response("not json")
+
+
+def test_parse_response_error_includes_snippet_and_length():
+    raw = "Sure, here you go: not actually json at all"
+    with pytest.raises(ValueError) as exc_info:
+        parse_response(raw)
+    msg = str(exc_info.value)
+    assert f"raw_length={len(raw)}" in msg
+    assert "Sure, here you go" in msg
+
+
+def test_parse_response_error_caps_snippet_at_200_chars():
+    raw = "x" * 5000
+    with pytest.raises(ValueError) as exc_info:
+        parse_response(raw)
+    msg = str(exc_info.value)
+    assert "raw_length=5000" in msg
+    # The repr of 200 x's is "'xxx…xxx'" — 200 chars + 2 quotes.
+    assert "'" + "x" * 200 + "'" in msg
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        (None, True),       # unset → default
+        ("", True),         # empty string → treated as unset-ish → default
+        ("true", True),
+        ("True", True),
+        ("1", True),
+        ("yes", True),
+        ("false", False),
+        ("False", False),
+        ("0", False),
+        ("no", False),
+        ("off", False),
+    ],
+)
+def test_env_flag_defaults_true(monkeypatch, value, expected):
+    if value is None:
+        monkeypatch.delenv("X_FLAG", raising=False)
+    else:
+        monkeypatch.setenv("X_FLAG", value)
+    assert _env_flag("X_FLAG", default=True) is expected
+
+
+def _fake_responses_resp(text: str):
+    resp = MagicMock()
+    resp.output_text = text
+    resp.usage = MagicMock(input_tokens=10, output_tokens=20)
+    return resp
+
+
+def _fake_chat_resp(text: str):
+    resp = MagicMock()
+    resp.choices = [MagicMock(message=MagicMock(content=text))]
+    resp.usage = MagicMock(prompt_tokens=10, completion_tokens=20)
+    return resp
+
+
+VALID_JSON = json.dumps({"recommendation": "hold", "summary": "ok", "signals": []})
+
+
+def test_client_default_uses_responses_api(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.delenv("OPENAI_USE_RESPONSES_API", raising=False)
+    with patch("lib.llm.OpenAI") as openai_ctor:
+        instance = openai_ctor.return_value
+        instance.responses.create.return_value = _fake_responses_resp(VALID_JSON)
+        client = OpenAIClient()
+        result = client.analyze("AAPL")
+        assert result.recommendation == "hold"
+        instance.responses.create.assert_called_once()
+        instance.chat.completions.create.assert_not_called()
+
+
+def test_client_uses_chat_completions_when_flag_false(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("OPENAI_USE_RESPONSES_API", "false")
+    with patch("lib.llm.OpenAI") as openai_ctor:
+        instance = openai_ctor.return_value
+        instance.chat.completions.create.return_value = _fake_chat_resp(VALID_JSON)
+        client = OpenAIClient()
+        result = client.analyze("AAPL")
+        assert result.recommendation == "hold"
+        instance.chat.completions.create.assert_called_once()
+        instance.responses.create.assert_not_called()
+        # chat.completions path must NOT pass the OpenAI hosted web_search tool.
+        call_kwargs = instance.chat.completions.create.call_args.kwargs
+        assert "tools" not in call_kwargs
+
+
+def test_client_chat_completions_path_handles_none_content(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("OPENAI_USE_RESPONSES_API", "false")
+    with patch("lib.llm.OpenAI") as openai_ctor:
+        instance = openai_ctor.return_value
+        # Some endpoints return null content; client must not crash with AttributeError.
+        resp = MagicMock()
+        resp.choices = [MagicMock(message=MagicMock(content=None))]
+        resp.usage = None
+        instance.chat.completions.create.return_value = resp
+        client = OpenAIClient()
+        with pytest.raises(ValueError, match="LLM did not return valid JSON"):
+            client.analyze("AAPL")
 
 def test_parse_response_handles_json_fence():
     payload = '```json\n{"recommendation":"buy","summary":"x","signals":[]}\n```'
