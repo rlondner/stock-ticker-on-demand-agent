@@ -1,6 +1,8 @@
 import json
 from unittest.mock import MagicMock, patch
+import httpx
 import pytest
+from openai import InternalServerError
 from pydantic import ValidationError
 from lib.llm import Analysis, OpenAIClient, Signal, _env_flag, parse_response
 
@@ -137,6 +139,33 @@ def test_client_chat_completions_path_handles_none_content(monkeypatch):
         client = OpenAIClient()
         with pytest.raises(ValueError, match="LLM did not return valid JSON"):
             client.analyze("AAPL")
+
+
+def _make_internal_server_error(status_code: int) -> InternalServerError:
+    """Build a real openai.InternalServerError matching a 5xx response (e.g. Anthropic 529)."""
+    req = httpx.Request("POST", "https://api.example.com/v1/chat/completions")
+    resp = httpx.Response(status_code, request=req, json={"error": {"message": "overloaded"}})
+    return InternalServerError("overloaded", response=resp, body=None)
+
+
+def test_client_retries_on_5xx_then_succeeds(monkeypatch):
+    """Anthropic returns 529 when overloaded; OpenAI returns 503. tenacity must retry."""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("OPENAI_USE_RESPONSES_API", "false")
+    with patch("lib.llm.OpenAI") as openai_ctor:
+        instance = openai_ctor.return_value
+        # First two calls raise 529; third returns a valid response.
+        # Patch tenacity's wait so the test doesn't actually sleep through the backoff.
+        instance.chat.completions.create.side_effect = [
+            _make_internal_server_error(529),
+            _make_internal_server_error(529),
+            _fake_chat_resp(VALID_JSON),
+        ]
+        with patch("lib.llm.wait_exponential", return_value=lambda *a, **kw: 0):
+            client = OpenAIClient()
+            result = client.analyze("AAPL")
+        assert result.recommendation == "hold"
+        assert instance.chat.completions.create.call_count == 3
 
 def test_parse_response_handles_json_fence():
     payload = '```json\n{"recommendation":"buy","summary":"x","signals":[]}\n```'

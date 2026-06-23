@@ -4,7 +4,7 @@ import re
 from typing import Protocol
 from pydantic import BaseModel, Field
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
-from openai import OpenAI, APIError, RateLimitError, APIConnectionError
+from openai import OpenAI, APIError, RateLimitError, APIConnectionError, InternalServerError
 from opentelemetry import trace
 from .prompts import SYSTEM_PROMPT, user_prompt
 
@@ -67,7 +67,9 @@ class OpenAIClient:
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=16),
-        retry=retry_if_exception_type((RateLimitError, APIConnectionError)),
+        # InternalServerError covers all 5xx (500, 502, 503, 504, 529-overloaded).
+        # Anthropic's compat layer returns 529 when overloaded; OpenAI uses 503.
+        retry=retry_if_exception_type((RateLimitError, APIConnectionError, InternalServerError)),
         reraise=True,
     )
     def analyze(self, ticker: str) -> Analysis:
