@@ -1,4 +1,6 @@
-.PHONY: dev test seed snapshot smoke clean
+.PHONY: dev test seed snapshot smoke clean agent-local
+
+AGENT_PY := $(if $(wildcard agent/.venv/Scripts/python.exe),.venv/Scripts/python.exe,.venv/bin/python)
 
 dev:
 	pnpm dev
@@ -15,3 +17,6 @@ snapshot:
 
 smoke:
 	bash ./scripts/smoke.sh
+
+agent-local:
+	cd agent && ./$(AGENT_PY) analyze.py $(TICKER)
