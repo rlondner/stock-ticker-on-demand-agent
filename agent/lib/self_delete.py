@@ -10,6 +10,8 @@ def self_delete(sandbox_id: str | None = None) -> None:
     api_key = os.environ.get("DAYTONA_API_KEY")
     if not sid or not api_key:
         return
+    if sid.startswith("local-"):
+        return
     base = os.environ.get("DAYTONA_API_URL", "https://app.daytona.io/api")
     try:
         httpx.delete(
