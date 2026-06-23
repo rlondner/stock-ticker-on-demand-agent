@@ -27,6 +27,7 @@ describe("spawnAnalysisSubprocess", () => {
     delete process.env.OPENAI_MODEL;
     delete process.env.SENTRY_DSN_AGENT;
     delete process.env.DD_API_KEY;
+    delete process.env.DD_TRACE_ENABLED;
     delete process.env.DAYTONA_API_KEY;
     spawnMock.mockReset();
     spawnMock.mockReturnValue({ unref: unrefMock, pid: 9999 });
@@ -83,6 +84,16 @@ describe("spawnAnalysisSubprocess", () => {
     expect(opts.env.DD_API_KEY).toBe("dd-key");
     expect(opts.env.DD_SERVICE).toBe("stock-agent");
     expect(opts.env.DD_SITE).toBe("datadoghq.com");
+  });
+
+  it("forwards DD_TRACE_ENABLED only when set", async () => {
+    process.env.DD_TRACE_ENABLED = "false";
+    const { spawnAnalysisSubprocess } = await import("@/lib/runtime/subprocess");
+    const span = trace.getTracer("t").startSpan("p");
+    await spawnAnalysisSubprocess("job-dd-disabled", span);
+    span.end();
+    const opts = spawnMock.mock.calls.at(-1)![2];
+    expect(opts.env.DD_TRACE_ENABLED).toBe("false");
   });
 
   it("never forwards DAYTONA_API_KEY", async () => {

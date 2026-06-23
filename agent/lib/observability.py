@@ -47,8 +47,12 @@ def init_observability(job_id: str) -> None:
         _sentry_inited = True
 
     # === Datadog exporter ===
+    # dd-trace ships to a local Datadog Agent on localhost:8126 by default. If you're
+    # running the agent locally without an Agent, set DD_TRACE_ENABLED=false in .env
+    # to silence the "failed to send, dropping N traces" warnings.
     dd_key = os.environ.get("DD_API_KEY")
-    if dd_key:
+    dd_disabled = os.environ.get("DD_TRACE_ENABLED", "").strip().lower() == "false"
+    if dd_key and not dd_disabled:
         import ddtrace
         ddtrace.config.service = os.environ.get("DD_SERVICE", "stock-agent")
         ddtrace.config.env = os.environ.get("DD_ENV", "development")

@@ -23,6 +23,7 @@ export async function spawnAnalysisSandbox(jobId: string, parentSpan: Span): Pro
     ...forwardIfSet("OPENAI_MODEL"),
     ...forwardIfSet("OPENAI_USE_RESPONSES_API"),
     ...forwardIfSet("SENTRY_DSN_AGENT"),
+    ...forwardIfSet("DD_TRACE_ENABLED"),
     ...datadogBlockIfEnabled(),
   };
 

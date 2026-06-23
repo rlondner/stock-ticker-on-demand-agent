@@ -105,6 +105,7 @@ Set `AGENT_RUNTIME=subprocess` in `.env` to skip Daytona entirely (see *HOW-TO: 
 | `DD_SITE` | `datadoghq.com` / `datadoghq.eu` / `us3.datadoghq.com` / etc. |
 | `DD_SERVICE` | Service name in Datadog. `stock-agent-frontend` for NextJS; `stock-agent` is forced inside the sandbox. |
 | `DD_ENV` | `development` / `staging` / `production` |
+| `DD_TRACE_ENABLED` | `false` short-circuits dd-trace initialization (NextJS + agent). Use when running locally without a Datadog Agent on `localhost:8126` to silence the "failed to send, dropping N traces" warnings. Leave unset/`true` to ship traces. |
 
 ## HOW-TO: Provision Neon
 
@@ -323,6 +324,11 @@ Expected: `pending → running → complete` over ~30–90 seconds, then the scr
 - **Symptom:** Backend is configured but no spans or events appear.
 - **Cause (most common):** env vars set in your shell are not visible to NextJS because you didn't restart `pnpm dev` after editing `.env`. Or, for the agent, the env var isn't forwarded into the sandbox (check `lib/daytona.ts:datadogBlockIfEnabled` / `forwardIfSet`).
 - **Fix:** Stop the dev server, confirm `process.env.SENTRY_DSN_NEXTJS` or `process.env.DD_API_KEY` is set in the shell launching `pnpm dev`, restart. For the sandbox side: submit a job, then check the Daytona dashboard for the sandbox's env vars.
+
+### dd-trace logs "failed to send, dropping N traces to intake at http://localhost:8126"
+- **Symptom:** Either NextJS or the Python agent logs the dropped-traces warning repeatedly. The app still works.
+- **Cause:** `DD_API_KEY` is set, so dd-trace initializes and tries to ship traces to a local Datadog Agent on `localhost:8126`. No Agent is running there (typical when running with `AGENT_RUNTIME=subprocess` for local dev).
+- **Fix:** Add `DD_TRACE_ENABLED=false` to `.env` (or your shell). Both runners (`lib/observability/exporters/datadog.ts` and `agent/lib/observability.py`) short-circuit when this is `false`, and it's forwarded into both the sandbox and the local subprocess. To keep Datadog active in Daytona-mode runs, leave it unset — only set it when iterating locally.
 
 ### Sandbox not self-deleting
 - **Symptom:** Daytona dashboard shows lots of stopped-but-not-deleted sandboxes.

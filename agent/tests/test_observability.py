@@ -46,3 +46,27 @@ def test_init_with_both_vendors_does_not_crash(monkeypatch):
     importlib.reload(o)
     o.init_observability(job_id="job-both")
     o.flush_observability(timeout_s=1.0)
+
+
+def test_dd_trace_enabled_false_short_circuits(monkeypatch):
+    monkeypatch.setenv("DD_API_KEY", "dd-test-key")
+    monkeypatch.setenv("DD_TRACE_ENABLED", "false")
+    monkeypatch.setenv("JOB_ID", "job-dd-disabled")
+    import importlib, lib.observability as o
+    importlib.reload(o)
+    o.init_observability(job_id="job-dd-disabled")
+    # _dd_inited should remain False when DD_TRACE_ENABLED=false even though DD_API_KEY is set.
+    assert o._dd_inited is False
+    o.flush_observability(timeout_s=1.0)
+
+
+def test_dd_trace_enabled_unset_still_inits(monkeypatch):
+    monkeypatch.setenv("DD_API_KEY", "dd-test-key")
+    monkeypatch.delenv("DD_TRACE_ENABLED", raising=False)
+    monkeypatch.setenv("JOB_ID", "job-dd-default")
+    import importlib, lib.observability as o
+    importlib.reload(o)
+    o.init_observability(job_id="job-dd-default")
+    # Default behavior preserved: with DD_API_KEY set and DD_TRACE_ENABLED unset, Datadog inits.
+    assert o._dd_inited is True
+    o.flush_observability(timeout_s=1.0)

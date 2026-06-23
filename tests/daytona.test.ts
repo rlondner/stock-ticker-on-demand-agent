@@ -26,6 +26,7 @@ describe("spawnAnalysisSandbox", () => {
     delete process.env.OPENAI_MODEL;
     delete process.env.SENTRY_DSN_AGENT;
     delete process.env.DD_API_KEY;
+    delete process.env.DD_TRACE_ENABLED;
     createMock.mockClear();
   });
 
@@ -85,5 +86,15 @@ describe("spawnAnalysisSandbox", () => {
     expect(call.envVars.DD_API_KEY).toBe("dd-key");
     expect(call.envVars.DD_SERVICE).toBe("stock-agent");
     expect(call.envVars.DD_SITE).toBe("datadoghq.com");
+  });
+
+  it("forwards DD_TRACE_ENABLED only when set", async () => {
+    process.env.DD_TRACE_ENABLED = "false";
+    const { spawnAnalysisSandbox } = await import("@/lib/daytona");
+    const span = trace.getTracer("t").startSpan("p");
+    await spawnAnalysisSandbox("job-dd-disabled", span);
+    span.end();
+    const call = createMock.mock.calls.at(-1)![0] as any;
+    expect(call.envVars.DD_TRACE_ENABLED).toBe("false");
   });
 });
