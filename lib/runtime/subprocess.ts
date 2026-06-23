@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, openSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync } from "node:fs";
 import path from "node:path";
 import type { Span } from "@opentelemetry/api";
 import { injectTraceparent, forwardIfSet, datadogBlockIfEnabled } from "./env";
@@ -52,6 +52,7 @@ export async function spawnAnalysisSubprocess(
     detached: true,
   });
   child.unref();
+  closeSync(logFd);
 
   return `local-${jobId}`;
 }

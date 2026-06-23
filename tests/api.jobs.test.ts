@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { POST } from "@/app/api/jobs/route";
 
-vi.mock("@/lib/daytona", () => ({
-  spawnAnalysisSandbox: vi.fn(async (jobId: string) => `sb-${jobId.slice(0, 8)}`),
+vi.mock("@/lib/runtime", () => ({
+  spawnAgent: vi.fn(async (jobId: string) => `sb-${jobId.slice(0, 8)}`),
 }));
 
 vi.mock("@/lib/db/client", () => {

@@ -7,9 +7,11 @@ const unrefMock = vi.fn();
 const existsSyncMock = vi.fn();
 const mkdirSyncMock = vi.fn();
 const openSyncMock = vi.fn(() => 42);
+const closeSyncMock = vi.fn();
 
 vi.mock("node:child_process", () => ({ spawn: spawnMock }));
 vi.mock("node:fs", () => ({
+  closeSync: closeSyncMock,
   existsSync: existsSyncMock,
   mkdirSync: mkdirSyncMock,
   openSync: openSyncMock,
@@ -31,6 +33,7 @@ describe("spawnAnalysisSubprocess", () => {
     existsSyncMock.mockReset().mockReturnValue(true);
     mkdirSyncMock.mockReset();
     openSyncMock.mockClear();
+    closeSyncMock.mockClear();
     unrefMock.mockClear();
   });
 
@@ -105,6 +108,14 @@ describe("spawnAnalysisSubprocess", () => {
       expect.stringMatching(/agent[\\/]\.runs[\\/]job-log\.log$/),
       "a",
     );
+  });
+
+  it("closes the parent's log fd after spawn to avoid leaking it", async () => {
+    const { spawnAnalysisSubprocess } = await import("@/lib/runtime/subprocess");
+    const span = trace.getTracer("t").startSpan("p");
+    await spawnAnalysisSubprocess("job-close", span);
+    span.end();
+    expect(closeSyncMock).toHaveBeenCalledWith(42);
   });
 
   it("throws a clear error when the venv Python is missing", async () => {
