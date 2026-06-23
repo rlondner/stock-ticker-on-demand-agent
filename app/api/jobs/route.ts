@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { eq } from "drizzle-orm";
 import { db, jobs } from "@/lib/db/client";
-import { spawnAnalysisSandbox } from "@/lib/daytona";
+import { spawnAgent } from "@/lib/runtime";
 import { traced, addAttrs, recordError } from "@/lib/observability/api";
 
 const Body = z.object({
@@ -26,7 +26,7 @@ export async function POST(req: Request): Promise<Response> {
     addAttrs(span, { job_id: jobId, ticker: parsed.ticker });
 
     try {
-      const sandboxId = await spawnAnalysisSandbox(jobId, span);
+      const sandboxId = await spawnAgent(jobId, span);
       await db.update(jobs).set({ sandboxId }).where(eq(jobs.id, jobId));
       addAttrs(span, { sandbox_id: sandboxId, outcome: "accepted" });
       return Response.json({ jobId });
