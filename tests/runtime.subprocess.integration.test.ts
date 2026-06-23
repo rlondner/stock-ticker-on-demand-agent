@@ -60,6 +60,8 @@ afterAll(async () => {
 
 describe.skipIf(!haveSecrets)("subprocess runner integration", () => {
   it("runs the real Python agent end-to-end and marks the job complete", async () => {
+    const origUrl = process.env.OPENAI_API_URL;
+    const origRuntime = process.env.AGENT_RUNTIME;
     process.env.OPENAI_API_URL = serverUrl;
     process.env.AGENT_RUNTIME = "subprocess";
 
@@ -94,6 +96,11 @@ describe.skipIf(!haveSecrets)("subprocess runner integration", () => {
       expect(status, `final status; error=${row?.error}`).toBe("complete");
       expect(["buy", "hold", "sell"]).toContain(row.recommendation);
     } finally {
+      // Restore env-var mutations + cleanup the row.
+      if (origUrl === undefined) delete process.env.OPENAI_API_URL;
+      else process.env.OPENAI_API_URL = origUrl;
+      if (origRuntime === undefined) delete process.env.AGENT_RUNTIME;
+      else process.env.AGENT_RUNTIME = origRuntime;
       await db.delete(jobs).where(eq(jobs.id, jobId));
     }
   }, 60_000);
