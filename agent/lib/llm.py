@@ -34,10 +34,15 @@ def parse_response(raw: str) -> Analysis:
         raise ValueError(f"LLM did not return valid JSON: {e}") from e
     return Analysis(**data)
 
+DEFAULT_MODEL = "gpt-4.1-mini"
+
 class OpenAIClient:
-    def __init__(self, model: str = "gpt-4.1-mini"):
-        self._client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
-        self._model = model
+    def __init__(self, model: str | None = None):
+        self._client = OpenAI(
+            api_key=os.environ["OPENAI_API_KEY"],
+            base_url=os.environ.get("OPENAI_API_URL") or None,
+        )
+        self._model = model or os.environ.get("OPENAI_MODEL") or DEFAULT_MODEL
 
     @retry(
         stop=stop_after_attempt(3),

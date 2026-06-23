@@ -68,6 +68,13 @@ All variables live in `.env`. `.env.example` is the source of truth — keep it 
 | `NEON_DATABASE_URL` | Neon dashboard → Connection string | `postgresql://user:pass@ep-…neon.tech/neondb` | DB calls fail everywhere |
 | `OPENAI_API_KEY` | OpenAI dashboard → API Keys | `sk-proj-…` | Agent crashes when it tries to call the LLM |
 
+### Optional — OpenAI-compatible endpoint
+
+| Var | What it does |
+|---|---|
+| `OPENAI_API_URL` | Override the OpenAI base URL to point at any OpenAI-compatible endpoint (Azure OpenAI, OpenRouter, vLLM, LiteLLM, local server, …). Unset → defaults to `https://api.openai.com/v1`. Forwarded into the sandbox only when set. |
+| `OPENAI_MODEL` | Override the model the agent calls. Unset → defaults to `gpt-4.1-mini`. Must be supported by whichever endpoint `OPENAI_API_URL` points at. Forwarded into the sandbox only when set. |
+
 ### Optional — Sentry block (omit entirely to disable Sentry)
 
 | Var | What it does |
@@ -131,6 +138,8 @@ All variables live in `.env`. `.env.example` is the source of truth — keep it 
    ```
 
 The agent uses the model `gpt-4.1-mini` by default with the `web_search` tool. Expected cost per analysis: ~$0.05–$0.20.
+
+To route requests to an OpenAI-compatible endpoint instead, set `OPENAI_API_URL` in `.env` (e.g. `https://my-proxy.example.com/v1`). The agent passes it as the SDK's `base_url`; the model name and `web_search` tool must be supported by the target endpoint. Set `OPENAI_MODEL` in `.env` to pick a different model (e.g. `gpt-4.1`, `gpt-4o`, or a model name your endpoint recognizes).
 
 ## HOW-TO: Enable Sentry only
 
@@ -268,8 +277,8 @@ Expected: `pending → running → complete` over ~30–90 seconds, then the scr
 ├── lib/                  NextJS shared code (db, daytona, observability)
 ├── components/           shadcn/ui + project components
 ├── agent/                Python agent — source for the Daytona snapshot
-├── db/migrations/        SQL migrations applied by scripts/apply_migration.ts
-├── scripts/              build_snapshot.sh, apply_migration.ts, smoke.sh
+├── db/migrations/        SQL migrations applied by scripts/apply_migration.mts
+├── scripts/              build_snapshot.sh, apply_migration.mts, smoke.sh
 ├── tests/                NextJS tests (vitest)
 └── docs/superpowers/
     ├── specs/            Design documents

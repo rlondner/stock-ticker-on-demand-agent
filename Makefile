@@ -8,10 +8,10 @@ test:
 	cd agent && .venv/bin/pytest
 
 seed:
-	pnpm exec tsx scripts/apply_migration.ts
+	pnpm exec tsx --env-file=.env scripts/apply_migration.mts
 
 snapshot:
-	./scripts/build_snapshot.sh
+	bash ./scripts/build_snapshot.sh
 
 smoke:
-	./scripts/smoke.sh
+	bash ./scripts/smoke.sh

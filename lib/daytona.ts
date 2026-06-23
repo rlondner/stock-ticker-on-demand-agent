@@ -34,6 +34,8 @@ export async function spawnAnalysisSandbox(jobId: string, parentSpan: Span): Pro
     OPENAI_API_KEY: process.env.OPENAI_API_KEY!,
     DAYTONA_API_KEY: process.env.DAYTONA_API_KEY!,
     TRACEPARENT: carrier.traceparent ?? "",
+    ...forwardIfSet("OPENAI_API_URL"),
+    ...forwardIfSet("OPENAI_MODEL"),
     ...forwardIfSet("SENTRY_DSN_AGENT"),
     ...datadogBlockIfEnabled(),
   };

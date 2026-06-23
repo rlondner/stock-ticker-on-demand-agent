@@ -22,6 +22,8 @@ describe("spawnAnalysisSandbox", () => {
     process.env.DAYTONA_API_KEY = "dt-test";
     process.env.NEON_DATABASE_URL = "postgresql://test";
     process.env.OPENAI_API_KEY = "sk-test";
+    delete process.env.OPENAI_API_URL;
+    delete process.env.OPENAI_MODEL;
     delete process.env.SENTRY_DSN_AGENT;
     delete process.env.DD_API_KEY;
     createMock.mockClear();
@@ -37,8 +39,30 @@ describe("spawnAnalysisSandbox", () => {
     expect(call.snapshot).toBe("stock-agent:latest");
     expect(call.envVars.JOB_ID).toBe("job-abc");
     expect(call.envVars.TRACEPARENT).toMatch(/^00-/);
+    expect(call.envVars.OPENAI_API_URL).toBeUndefined();
+    expect(call.envVars.OPENAI_MODEL).toBeUndefined();
     expect(call.envVars.SENTRY_DSN_AGENT).toBeUndefined();
     expect(call.envVars.DD_API_KEY).toBeUndefined();
+  });
+
+  it("forwards OPENAI_API_URL only when set", async () => {
+    process.env.OPENAI_API_URL = "https://my-proxy.example.com/v1";
+    const { spawnAnalysisSandbox } = await import("@/lib/daytona");
+    const span = trace.getTracer("t").startSpan("p");
+    await spawnAnalysisSandbox("job-url", span);
+    span.end();
+    const call = createMock.mock.calls.at(-1)![0] as any;
+    expect(call.envVars.OPENAI_API_URL).toBe("https://my-proxy.example.com/v1");
+  });
+
+  it("forwards OPENAI_MODEL only when set", async () => {
+    process.env.OPENAI_MODEL = "gpt-4.1";
+    const { spawnAnalysisSandbox } = await import("@/lib/daytona");
+    const span = trace.getTracer("t").startSpan("p");
+    await spawnAnalysisSandbox("job-model", span);
+    span.end();
+    const call = createMock.mock.calls.at(-1)![0] as any;
+    expect(call.envVars.OPENAI_MODEL).toBe("gpt-4.1");
   });
 
   it("forwards Sentry DSN only when set", async () => {
