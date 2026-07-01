@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import re
 from typing import Protocol
@@ -7,6 +8,14 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 from openai import OpenAI, APIError, RateLimitError, APIConnectionError, InternalServerError
 from opentelemetry import trace
 from .prompts import SYSTEM_PROMPT, user_prompt
+
+logger = logging.getLogger(__name__)
+
+
+class EmptyLLMResponseError(Exception):
+    """The model returned empty content (None or blank). Retryable — some
+    server-managed bots and small local models produce this ~1-in-10 times
+    with finish_reason='stop' and no error status."""
 
 class Signal(BaseModel):
     label: str
@@ -52,6 +61,25 @@ def _env_flag(name: str, default: bool) -> bool:
     return stripped not in ("false", "0", "no", "off")
 
 
+def _require_nonempty(text: str | None, *, api: str, finish_reason: str | None, span) -> None:
+    """Log a warning + record a span event + raise EmptyLLMResponseError if the
+    model returned no content. tenacity catches EmptyLLMResponseError and retries."""
+    if text and text.strip():
+        return
+    span.add_event("llm.empty_response", {
+        "api": api,
+        "finish_reason": finish_reason or "unknown",
+        "text_is_none": text is None,
+    })
+    logger.warning(
+        "LLM returned empty response (api=%s, finish_reason=%s, text_is_none=%s); retrying",
+        api, finish_reason, text is None,
+    )
+    raise EmptyLLMResponseError(
+        f"empty content (api={api}, finish_reason={finish_reason!r}, text_is_none={text is None})"
+    )
+
+
 class OpenAIClient:
     def __init__(self, model: str | None = None):
         self._client = OpenAI(
@@ -69,42 +97,49 @@ class OpenAIClient:
         wait=wait_exponential(multiplier=1, min=1, max=16),
         # InternalServerError covers all 5xx (500, 502, 503, 504, 529-overloaded).
         # Anthropic's compat layer returns 529 when overloaded; OpenAI uses 503.
-        retry=retry_if_exception_type((RateLimitError, APIConnectionError, InternalServerError)),
+        # EmptyLLMResponseError covers server-managed bots and small local models
+        # that intermittently return content="" with finish_reason='stop'.
+        retry=retry_if_exception_type((
+            RateLimitError, APIConnectionError, InternalServerError, EmptyLLMResponseError,
+        )),
         reraise=True,
     )
     def analyze(self, ticker: str) -> Analysis:
         tracer = trace.get_tracer("stock-agent")
         with tracer.start_as_current_span("llm.analyze") as span:
             span.set_attribute("model", self._model)
+            messages = [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt(ticker)},
+            ]
             if self._use_responses_api:
                 span.set_attribute("api", "responses")
                 resp = self._client.responses.create(
                     model=self._model,
-                    input=[
-                        {"role": "system", "content": SYSTEM_PROMPT},
-                        {"role": "user", "content": user_prompt(ticker)},
-                    ],
+                    input=messages,
                     tools=[{"type": "web_search"}],
                 )
                 text = resp.output_text
+                finish_reason = getattr(resp, "status", None)
                 usage = getattr(resp, "usage", None)
                 if usage:
                     span.set_attribute("tokens_in", getattr(usage, "input_tokens", 0))
                     span.set_attribute("tokens_out", getattr(usage, "output_tokens", 0))
+                _require_nonempty(text, api="responses", finish_reason=finish_reason, span=span)
             else:
                 span.set_attribute("api", "chat.completions")
                 resp = self._client.chat.completions.create(
                     model=self._model,
-                    messages=[
-                        {"role": "system", "content": SYSTEM_PROMPT},
-                        {"role": "user", "content": user_prompt(ticker)},
-                    ],
+                    messages=messages,
                 )
-                text = resp.choices[0].message.content or ""
+                choice = resp.choices[0]
+                text = choice.message.content
+                finish_reason = choice.finish_reason
                 usage = getattr(resp, "usage", None)
                 if usage:
                     span.set_attribute("tokens_in", getattr(usage, "prompt_tokens", 0))
                     span.set_attribute("tokens_out", getattr(usage, "completion_tokens", 0))
+                _require_nonempty(text, api="chat.completions", finish_reason=finish_reason, span=span)
             return parse_response(text)
 
 def run_analysis(ticker: str) -> dict:

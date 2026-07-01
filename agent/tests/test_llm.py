@@ -4,7 +4,7 @@ import httpx
 import pytest
 from openai import InternalServerError
 from pydantic import ValidationError
-from lib.llm import Analysis, OpenAIClient, Signal, _env_flag, parse_response
+from lib.llm import Analysis, EmptyLLMResponseError, OpenAIClient, Signal, _env_flag, parse_response
 
 def test_analysis_validates_buy_hold_sell():
     a = Analysis(recommendation="buy", summary="strong fundamentals", signals=[])
@@ -126,19 +126,84 @@ def test_client_uses_chat_completions_when_flag_false(monkeypatch):
         assert "tools" not in call_kwargs
 
 
-def test_client_chat_completions_path_handles_none_content(monkeypatch):
+def _empty_chat_resp():
+    resp = MagicMock()
+    resp.choices = [MagicMock(message=MagicMock(content=""), finish_reason="stop")]
+    resp.usage = MagicMock(prompt_tokens=0, completion_tokens=0)
+    return resp
+
+
+def _none_chat_resp():
+    resp = MagicMock()
+    resp.choices = [MagicMock(message=MagicMock(content=None), finish_reason="stop")]
+    resp.usage = None
+    return resp
+
+
+def test_client_retries_on_empty_response_then_succeeds(monkeypatch):
+    """Some server-managed bots and small local models intermittently return
+    content='' with finish_reason='stop' and no error. tenacity must retry."""
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setenv("OPENAI_USE_RESPONSES_API", "false")
     with patch("lib.llm.OpenAI") as openai_ctor:
         instance = openai_ctor.return_value
-        # Some endpoints return null content; client must not crash with AttributeError.
-        resp = MagicMock()
-        resp.choices = [MagicMock(message=MagicMock(content=None))]
-        resp.usage = None
-        instance.chat.completions.create.return_value = resp
-        client = OpenAIClient()
-        with pytest.raises(ValueError, match="LLM did not return valid JSON"):
-            client.analyze("AAPL")
+        instance.chat.completions.create.side_effect = [
+            _empty_chat_resp(),
+            _none_chat_resp(),
+            _fake_chat_resp(VALID_JSON),
+        ]
+        with patch("lib.llm.wait_exponential", return_value=lambda *a, **kw: 0):
+            client = OpenAIClient()
+            result = client.analyze("AAPL")
+        assert result.recommendation == "hold"
+        assert instance.chat.completions.create.call_count == 3
+
+
+def test_client_raises_empty_error_after_all_retries_exhausted(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("OPENAI_USE_RESPONSES_API", "false")
+    with patch("lib.llm.OpenAI") as openai_ctor:
+        instance = openai_ctor.return_value
+        instance.chat.completions.create.side_effect = [
+            _empty_chat_resp(),
+            _empty_chat_resp(),
+            _empty_chat_resp(),
+        ]
+        with patch("lib.llm.wait_exponential", return_value=lambda *a, **kw: 0):
+            client = OpenAIClient()
+            with pytest.raises(EmptyLLMResponseError):
+                client.analyze("AAPL")
+        assert instance.chat.completions.create.call_count == 3
+
+
+def test_client_logs_warning_and_records_span_event_on_empty(monkeypatch, caplog):
+    """Empty response must produce a WARNING log + a span event, so observability
+    picks up the signal even when a retry rescues the outer call."""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("OPENAI_USE_RESPONSES_API", "false")
+    with patch("lib.llm.OpenAI") as openai_ctor, patch("lib.llm.trace") as trace_mock:
+        instance = openai_ctor.return_value
+        instance.chat.completions.create.side_effect = [
+            _empty_chat_resp(),
+            _fake_chat_resp(VALID_JSON),
+        ]
+        span = MagicMock()
+        trace_mock.get_tracer.return_value.start_as_current_span.return_value.__enter__.return_value = span
+        with patch("lib.llm.wait_exponential", return_value=lambda *a, **kw: 0):
+            client = OpenAIClient()
+            with caplog.at_level("WARNING", logger="lib.llm"):
+                client.analyze("AAPL")
+        # Warning log from the first (empty) attempt.
+        assert any(
+            "LLM returned empty response" in r.message and r.levelname == "WARNING"
+            for r in caplog.records
+        )
+        # Span event on the first (empty) attempt.
+        event_calls = [c for c in span.add_event.call_args_list if c.args[0] == "llm.empty_response"]
+        assert len(event_calls) >= 1
+        attrs = event_calls[0].args[1]
+        assert attrs["api"] == "chat.completions"
+        assert attrs["finish_reason"] == "stop"
 
 
 def _make_internal_server_error(status_code: int) -> InternalServerError:
