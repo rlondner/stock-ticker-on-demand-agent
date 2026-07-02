@@ -148,3 +148,66 @@ def test_fetch_snapshot_partial_info_leaves_nulls_and_change_pct_none():
     assert s.previous_close is None
     assert s.change_pct is None
     assert s.currency == "USD"
+
+
+def test_fetch_snapshot_returns_none_when_info_is_empty():
+    """Delisted / unknown ticker: yfinance returns an empty info dict → None."""
+    from lib import finance
+
+    fake_ticker = MagicMock()
+    fake_ticker.info = {}
+    with patch.object(finance, "yfinance") as yf:
+        yf.Ticker.return_value = fake_ticker
+        assert finance.fetch_snapshot("XXXX") is None
+
+
+def test_fetch_snapshot_retries_then_returns_none_on_persistent_failure(caplog):
+    """yfinance raises on every attempt → fetch_snapshot returns None after retries."""
+    from lib import finance
+
+    with patch.object(finance, "yfinance") as yf:
+        yf.Ticker.side_effect = RuntimeError("yahoo says no")
+        with caplog.at_level("WARNING"):
+            result = finance.fetch_snapshot("MDB")
+
+    assert result is None
+    # yfinance.Ticker should have been called 3 times (initial + 2 retries).
+    assert yf.Ticker.call_count == 3
+    # Warning about the missing snapshot should have been logged.
+    assert any("snapshot.missing" in r.getMessage() for r in caplog.records)
+
+
+def test_fetch_snapshot_sets_span_attributes_on_current_span():
+    """fetch_snapshot annotates trace.get_current_span() with snapshot.* attrs on success."""
+    from lib import finance
+
+    fake_ticker = MagicMock()
+    fake_ticker.info = dict(_HAPPY_INFO)
+    fake_span = MagicMock()
+
+    with patch.object(finance, "yfinance") as yf, \
+         patch.object(finance.trace, "get_current_span", return_value=fake_span):
+        yf.Ticker.return_value = fake_ticker
+        finance.fetch_snapshot("MDB")
+
+    fake_span.set_attribute.assert_any_call("snapshot.fetched", True)
+    fake_span.set_attribute.assert_any_call("snapshot.ticker", "MDB")
+    fake_span.set_attribute.assert_any_call("snapshot.close", 342.15)
+    fake_span.set_attribute.assert_any_call("snapshot.change_pct", -1.24)
+
+
+def test_fetch_snapshot_sets_failure_span_attributes():
+    """On failure (empty info), fetch_snapshot marks the span with snapshot.fetched=False."""
+    from lib import finance
+
+    fake_ticker = MagicMock()
+    fake_ticker.info = {}
+    fake_span = MagicMock()
+
+    with patch.object(finance, "yfinance") as yf, \
+         patch.object(finance.trace, "get_current_span", return_value=fake_span):
+        yf.Ticker.return_value = fake_ticker
+        assert finance.fetch_snapshot("XXXX") is None
+
+    fake_span.set_attribute.assert_any_call("snapshot.fetched", False)
+    fake_span.set_attribute.assert_any_call("snapshot.ticker", "XXXX")

@@ -1,6 +1,12 @@
 from datetime import datetime, timezone
 from pydantic import BaseModel
 import yfinance
+import logging
+
+from opentelemetry import trace
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+
+logger = logging.getLogger(__name__)
 
 
 class Snapshot(BaseModel):
@@ -71,7 +77,27 @@ def _backfill_from_history(ticker_obj) -> tuple[float | None, float | None]:
         return (None, None)
 
 
-def fetch_snapshot(ticker: str) -> Snapshot | None:
+def _annotate_span_success(span, ticker: str, snap: "Snapshot") -> None:
+    span.set_attribute("snapshot.fetched", True)
+    span.set_attribute("snapshot.ticker", ticker)
+    if snap.close is not None:
+        span.set_attribute("snapshot.close", snap.close)
+    if snap.change_pct is not None:
+        span.set_attribute("snapshot.change_pct", snap.change_pct)
+
+
+def _annotate_span_failure(span, ticker: str) -> None:
+    span.set_attribute("snapshot.fetched", False)
+    span.set_attribute("snapshot.ticker", ticker)
+
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=1, max=4),
+    retry=retry_if_exception_type(Exception),
+    reraise=True,
+)
+def _fetch_snapshot_once(ticker: str) -> Snapshot | None:
     t = yfinance.Ticker(ticker)
     info = t.info or {}
     if not info:
@@ -79,10 +105,29 @@ def fetch_snapshot(ticker: str) -> Snapshot | None:
     snap = _snapshot_from_info(info)
     if snap.close is None or snap.previous_close is None:
         close, previous = _backfill_from_history(t)
-        # Only overwrite fields that are still missing; don't clobber values from info.
         if snap.close is None:
             snap = snap.model_copy(update={"close": close})
         if snap.previous_close is None:
             snap = snap.model_copy(update={"previous_close": previous})
         snap = snap.model_copy(update={"change_pct": _derive_change_pct(snap.close, snap.previous_close)})
+    return snap
+
+
+def fetch_snapshot(ticker: str) -> Snapshot | None:
+    """Best-effort ticker snapshot. Never raises. Returns None on total failure."""
+    span = trace.get_current_span()
+    try:
+        snap = _fetch_snapshot_once(ticker)
+    except Exception as exc:
+        _annotate_span_failure(span, ticker)
+        logger.warning(
+            "snapshot.missing ticker=%s reason=exception type=%s",
+            ticker, type(exc).__name__,
+        )
+        return None
+    if snap is None:
+        _annotate_span_failure(span, ticker)
+        logger.warning("snapshot.missing ticker=%s reason=empty_info", ticker)
+        return None
+    _annotate_span_success(span, ticker, snap)
     return snap
