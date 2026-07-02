@@ -7,7 +7,7 @@ export function statusPillProps(status: JobStatus): { label: string; className: 
     case "running":
       return { label: "Running", className: "bg-af-secondary-container text-af-on-secondary-container" };
     case "complete":
-      return { label: "Complete", className: "bg-af-primary-container text-af-on-primary" };
+      return { label: "Complete", className: "bg-af-primary-container text-af-on-primary-container" };
     case "failed":
       return { label: "Failed", className: "bg-af-error-container text-af-on-error-container" };
     default: {

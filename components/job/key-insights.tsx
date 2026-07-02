@@ -1,7 +1,7 @@
 import { mapSignalsToInsights, type RawSignal } from "@/lib/job/map-insights";
 
 const ICON_BG: Record<string, string> = {
-  psychology: "bg-af-primary-container text-af-on-primary",
+  psychology: "bg-af-primary-container text-af-primary-fixed",
   trending_up: "bg-af-secondary-container text-af-on-secondary-container",
   warning: "bg-af-error-container text-af-on-error-container",
   groups: "bg-af-surface-container text-af-on-surface",

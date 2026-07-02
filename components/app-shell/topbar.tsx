@@ -1,6 +1,6 @@
 export function Topbar() {
   return (
-    <header className="sticky top-0 z-10 bg-af-surface-container-lowest border-b border-af-outline-variant px-4 h-16 flex justify-between items-center w-full max-w-af-max mx-auto">
+    <header className="sticky top-0 z-10 shrink-0 bg-af-surface-container-lowest border-b border-af-outline-variant px-4 h-16 flex justify-between items-center w-full max-w-af-max mx-auto">
       <div className="flex items-center gap-8">
         <span className="text-2xl font-extrabold text-af-on-surface tracking-tight">AlphaFlow</span>
         <nav className="hidden lg:flex items-center gap-6">

@@ -74,7 +74,7 @@ export function LaunchForm() {
             <button
               type="submit"
               disabled={pending}
-              className="px-8 py-4 bg-af-primary-container text-af-on-primary rounded-lg text-sm font-semibold hover:opacity-90 transition-colors flex items-center gap-2 shadow-md disabled:opacity-60 disabled:cursor-not-allowed"
+              className="px-8 py-4 bg-af-primary text-af-on-primary rounded-lg text-sm font-semibold hover:opacity-90 transition-colors flex items-center gap-2 shadow-md disabled:opacity-60 disabled:cursor-not-allowed"
             >
               <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>
                 smart_toy
@@ -101,8 +101,8 @@ export function LaunchForm() {
           </div>
         </div>
         <div className="bg-af-surface-container-lowest bg-opacity-80 border border-af-outline-variant p-4 rounded-xl flex items-start gap-4">
-          <div className="p-2 bg-af-surface-container rounded-lg">
-            <span className="material-symbols-outlined text-af-on-surface">hub</span>
+          <div className="p-2 bg-af-tertiary-fixed rounded-lg">
+            <span className="material-symbols-outlined text-af-on-tertiary-fixed-variant">hub</span>
           </div>
           <div>
             <p className="text-sm font-semibold text-af-on-surface">Data Integrity</p>
