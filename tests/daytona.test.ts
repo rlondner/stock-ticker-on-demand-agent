@@ -39,7 +39,7 @@ describe("spawnAnalysisSandbox", () => {
     span.end();
     expect(id).toBe("sb-12345");
     const call = createMock.mock.calls[0][0] as any;
-    expect(call.snapshot).toBe("stock-agent:latest");
+    expect(call.snapshot).toBe("stock-agent:v1");
     expect(call.envVars.JOB_ID).toBe("job-abc");
     expect(call.envVars.TRACEPARENT).toMatch(/^00-/);
     expect(call.envVars.OPENAI_API_URL).toBeUndefined();

@@ -8,9 +8,9 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 echo "Building stock-agent image..."
-docker build -t stock-agent:latest ./agent
+docker build -t stock-agent:v1 ./agent
 
 echo "Publishing snapshot to Daytona..."
-daytona snapshot push stock-agent:latest --name stock-agent:latest
+daytona snapshot push stock-agent:v1 --name stock-agent:v1
 
 echo "Done."

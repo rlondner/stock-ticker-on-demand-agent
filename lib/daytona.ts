@@ -30,7 +30,7 @@ export async function spawnAnalysisSandbox(jobId: string, parentSpan: Span): Pro
   };
 
   const sandbox = await client().create({
-    snapshot: "stock-agent:latest",
+    snapshot: "stock-agent:v1",
     envVars: env,
     autoStopInterval: 0,
     autoDeleteInterval: 600,

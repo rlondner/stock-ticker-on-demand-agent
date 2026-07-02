@@ -191,7 +191,7 @@ The driver inserts a pending row, runs `agent.main()` in-process, and prints the
    ```powershell
    daytona snapshot list
    ```
-   `stock-agent:latest` should appear.
+   `stock-agent:v1` should appear.
 
 ## HOW-TO: Get an OpenAI key
 
@@ -327,8 +327,8 @@ Expected: `pending → running → complete` over ~30–90 seconds, then the scr
 
 ### Submit returns 500 with `spawn_failed`
 - **Symptom:** `/api/jobs` returns 500; the job row has `status='failed'` and `error='sandbox_spawn_failed: ...'`.
-- **Cause:** `DAYTONA_API_KEY` invalid, Daytona quota exceeded, or the `stock-agent:latest` snapshot was never published.
-- **Fix:** Run `daytona snapshot list` and verify `stock-agent:latest` exists. If not, `make snapshot`. If the key is the issue, regenerate it in the Daytona dashboard.
+- **Cause:** `DAYTONA_API_KEY` invalid, Daytona quota exceeded, or the `stock-agent:v1` snapshot was never published.
+- **Fix:** Run `daytona snapshot list` and verify `stock-agent:v1` exists. If not, `make snapshot`. If the key is the issue, regenerate it in the Daytona dashboard.
 
 ### Job stuck in `pending` forever
 - **Symptom:** UI shows spinner for minutes; the row is `pending` and `sandbox_id` is set.
