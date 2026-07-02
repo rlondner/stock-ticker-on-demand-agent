@@ -1,3 +1,4 @@
+import os from "node:os";
 import * as Sentry from "@sentry/nextjs";
 
 const dsn = process.env.SENTRY_DSN_NEXTJS;
@@ -6,5 +7,11 @@ if (dsn) {
     dsn,
     tracesSampleRate: 1.0,
     environment: process.env.DD_ENV ?? process.env.NODE_ENV ?? "development",
+    initialScope: {
+      tags: { host: os.hostname() },
+    },
+    _experiments: {
+      enableLogs: true,
+    },
   });
 }

@@ -1,3 +1,4 @@
+import os from "node:os";
 import { NodeSDK } from "@opentelemetry/sdk-node";
 import { resourceFromAttributes } from "@opentelemetry/resources";
 import {
@@ -15,6 +16,7 @@ export function initOtel(): void {
       [ATTR_SERVICE_NAME]: process.env.DD_SERVICE ?? "stock-agent-frontend",
       [ATTR_DEPLOYMENT_ENVIRONMENT_NAME]:
         process.env.DD_ENV ?? process.env.NODE_ENV ?? "development",
+      "host.name": os.hostname(),
     }),
     instrumentations: [getNodeAutoInstrumentations()],
   });

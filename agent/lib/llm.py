@@ -2,12 +2,14 @@ import json
 import logging
 import os
 import re
+import time
 from typing import Protocol
 from pydantic import BaseModel, Field
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from openai import OpenAI, APIError, RateLimitError, APIConnectionError, InternalServerError
 from opentelemetry import trace
 from .prompts import SYSTEM_PROMPT, user_prompt
+from .observability import get_host, emit_metric, emit_log
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +50,37 @@ def parse_response(raw: str) -> Analysis:
     return Analysis(**data)
 
 DEFAULT_MODEL = "gpt-4.1-mini"
+
+# Chars kept on the span attribute / log payload. Well under Sentry's ~8KB
+# per-attribute cap and Datadog's log-line cap. If the model returns more,
+# we set llm.response.truncated=true so it's obvious in the UI.
+_LLM_RAW_TRACE_MAX = 4000
+_LLM_SUMMARY_TRACE_MAX = 1000
+
+
+def _record_raw_response(span, text: str, finish_reason: str | None) -> None:
+    """Attach the raw LLM output to the span BEFORE parse, so a JSON-decode
+    failure still leaves the response visible in Trace Explorer."""
+    span.set_attribute("llm.response.length", len(text))
+    span.set_attribute("llm.response.truncated", len(text) > _LLM_RAW_TRACE_MAX)
+    span.set_attribute("llm.response.raw", text[:_LLM_RAW_TRACE_MAX])
+    if finish_reason is not None:
+        span.set_attribute("llm.finish_reason", str(finish_reason))
+
+
+def _record_parsed_response(span, analysis: "Analysis") -> None:
+    """Attach the parsed structure to the span + emit a log so recommendations
+    are queryable across all three backends without parsing raw text."""
+    span.set_attribute("llm.response.recommendation", analysis.recommendation)
+    span.set_attribute("llm.response.summary", analysis.summary[:_LLM_SUMMARY_TRACE_MAX])
+    span.set_attribute("llm.response.signals_count", len(analysis.signals))
+    emit_log(
+        "info",
+        "llm.responded",
+        recommendation=analysis.recommendation,
+        summary=analysis.summary[:_LLM_SUMMARY_TRACE_MAX],
+        signals_count=len(analysis.signals),
+    )
 
 
 def _env_flag(name: str, default: bool) -> bool:
@@ -107,40 +140,54 @@ class OpenAIClient:
     def analyze(self, ticker: str) -> Analysis:
         tracer = trace.get_tracer("stock-agent")
         with tracer.start_as_current_span("llm.analyze") as span:
+            span.set_attribute("host", get_host())
             span.set_attribute("model", self._model)
             messages = [
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt(ticker)},
             ]
-            if self._use_responses_api:
-                span.set_attribute("api", "responses")
-                resp = self._client.responses.create(
+            request_started_at = time.perf_counter()
+            try:
+                if self._use_responses_api:
+                    span.set_attribute("api", "responses")
+                    resp = self._client.responses.create(
+                        model=self._model,
+                        input=messages,
+                        tools=[{"type": "web_search"}],
+                    )
+                    text = resp.output_text
+                    finish_reason = getattr(resp, "status", None)
+                    usage = getattr(resp, "usage", None)
+                    if usage:
+                        span.set_attribute("tokens_in", getattr(usage, "input_tokens", 0))
+                        span.set_attribute("tokens_out", getattr(usage, "output_tokens", 0))
+                    _require_nonempty(text, api="responses", finish_reason=finish_reason, span=span)
+                else:
+                    span.set_attribute("api", "chat.completions")
+                    resp = self._client.chat.completions.create(
+                        model=self._model,
+                        messages=messages,
+                    )
+                    choice = resp.choices[0]
+                    text = choice.message.content
+                    finish_reason = choice.finish_reason
+                    usage = getattr(resp, "usage", None)
+                    if usage:
+                        span.set_attribute("tokens_in", getattr(usage, "prompt_tokens", 0))
+                        span.set_attribute("tokens_out", getattr(usage, "completion_tokens", 0))
+                    _require_nonempty(text, api="chat.completions", finish_reason=finish_reason, span=span)
+
+                _record_raw_response(span, text, finish_reason)
+                analysis = parse_response(text)
+                _record_parsed_response(span, analysis)
+                return analysis
+            finally:
+                emit_metric(
+                    "llm.duration_ms",
+                    (time.perf_counter() - request_started_at) * 1000,
                     model=self._model,
-                    input=messages,
-                    tools=[{"type": "web_search"}],
+                    api="responses" if self._use_responses_api else "chat.completions",
                 )
-                text = resp.output_text
-                finish_reason = getattr(resp, "status", None)
-                usage = getattr(resp, "usage", None)
-                if usage:
-                    span.set_attribute("tokens_in", getattr(usage, "input_tokens", 0))
-                    span.set_attribute("tokens_out", getattr(usage, "output_tokens", 0))
-                _require_nonempty(text, api="responses", finish_reason=finish_reason, span=span)
-            else:
-                span.set_attribute("api", "chat.completions")
-                resp = self._client.chat.completions.create(
-                    model=self._model,
-                    messages=messages,
-                )
-                choice = resp.choices[0]
-                text = choice.message.content
-                finish_reason = choice.finish_reason
-                usage = getattr(resp, "usage", None)
-                if usage:
-                    span.set_attribute("tokens_in", getattr(usage, "prompt_tokens", 0))
-                    span.set_attribute("tokens_out", getattr(usage, "completion_tokens", 0))
-                _require_nonempty(text, api="chat.completions", finish_reason=finish_reason, span=span)
-            return parse_response(text)
 
 def run_analysis(ticker: str) -> dict:
     client: LLMClient = OpenAIClient()

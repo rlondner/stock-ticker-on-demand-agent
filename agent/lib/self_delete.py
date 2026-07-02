@@ -1,5 +1,6 @@
 import os
 import httpx
+from .observability import emit_log
 
 def self_delete(sandbox_id: str | None = None) -> None:
     """DELETE this sandbox via the Daytona REST API. Never raises.
@@ -13,6 +14,7 @@ def self_delete(sandbox_id: str | None = None) -> None:
     if sid.startswith("local-"):
         return
     base = os.environ.get("DAYTONA_API_URL", "https://app.daytona.io/api")
+    emit_log("info", "daytona.self_delete.requested", sandbox_id=sid)
     try:
         httpx.delete(
             f"{base}/sandbox/{sid}",
