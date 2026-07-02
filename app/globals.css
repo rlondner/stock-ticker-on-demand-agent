@@ -83,6 +83,38 @@
   --sidebar-ring: oklch(0.708 0 0);
 }
 
+@theme {
+  --color-af-surface: #f8f9ff;
+  --color-af-surface-container-lowest: #ffffff;
+  --color-af-surface-container-low: #eff4ff;
+  --color-af-surface-container: #e5eeff;
+  --color-af-surface-container-high: #dce9ff;
+  --color-af-on-surface: #0b1c30;
+  --color-af-on-surface-variant: #45464d;
+  --color-af-outline-variant: #c6c6cd;
+  --color-af-primary: #000000;
+  --color-af-on-primary: #ffffff;
+  --color-af-primary-container: #131b2e;
+  --color-af-on-primary-container: #7c839b;
+  --color-af-secondary: #006c49;
+  --color-af-secondary-container: #6cf8bb;
+  --color-af-on-secondary-container: #00714d;
+  --color-af-error: #ba1a1a;
+  --color-af-error-container: #ffdad6;
+  --color-af-on-error-container: #93000a;
+  --color-af-signal-buy: #10b981;
+  --color-af-signal-hold: #f59e0b;
+  --color-af-signal-sell: #ef4444;
+
+  --spacing-af-xs: 4px;
+  --spacing-af-sm: 8px;
+  --spacing-af-md: 16px;
+  --spacing-af-lg: 24px;
+  --spacing-af-xl: 32px;
+
+  --container-af-max: 1280px;
+}
+
 .dark {
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);
