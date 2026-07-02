@@ -1,7 +1,8 @@
 import { notFound } from "next/navigation";
 import { eq } from "drizzle-orm";
 import { db, jobs } from "@/lib/db/client";
-import { JobDetail } from "@/components/job-detail";
+import { JobLivePoller } from "@/components/job/job-live-poller";
+import type { SerializedJob } from "@/lib/job/types";
 
 export const dynamic = "force-dynamic";
 
@@ -10,15 +11,17 @@ export default async function JobPage({ params }: { params: Promise<{ id: string
   const rows = await db.select().from(jobs).where(eq(jobs.id, id)).limit(1);
   if (rows.length === 0) notFound();
   const row = rows[0];
-  const initial = {
-    ...row,
+  const initial: SerializedJob = {
+    id: row.id,
+    ticker: row.ticker,
+    status: row.status as SerializedJob["status"],
+    recommendation: row.recommendation as SerializedJob["recommendation"],
+    result: (row.result as SerializedJob["result"]) ?? null,
+    error: row.error ?? null,
+    sandboxId: row.sandboxId ?? null,
     createdAt: row.createdAt.toISOString(),
     startedAt: row.startedAt ? row.startedAt.toISOString() : null,
     completedAt: row.completedAt ? row.completedAt.toISOString() : null,
   };
-  return (
-    <main className="p-8 max-w-3xl mx-auto">
-      <JobDetail initialJob={initial as any} />
-    </main>
-  );
+  return <JobLivePoller initialJob={initial} />;
 }
