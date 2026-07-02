@@ -1,12 +1,11 @@
 from datetime import datetime, timezone
 from pydantic import BaseModel
 import yfinance
-import logging
 
 from opentelemetry import trace
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
-logger = logging.getLogger(__name__)
+from .observability import emit_log
 
 
 class Snapshot(BaseModel):
@@ -120,14 +119,17 @@ def fetch_snapshot(ticker: str) -> Snapshot | None:
         snap = _fetch_snapshot_once(ticker)
     except Exception as exc:
         _annotate_span_failure(span, ticker)
-        logger.warning(
-            "snapshot.missing ticker=%s reason=exception type=%s",
-            ticker, type(exc).__name__,
+        emit_log(
+            "warn",
+            "snapshot.missing",
+            ticker=ticker,
+            reason="exception",
+            exception_type=type(exc).__name__,
         )
         return None
     if snap is None:
         _annotate_span_failure(span, ticker)
-        logger.warning("snapshot.missing ticker=%s reason=empty_info", ticker)
+        emit_log("warn", "snapshot.missing", ticker=ticker, reason="empty_info")
         return None
     _annotate_span_success(span, ticker, snap)
     return snap

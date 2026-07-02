@@ -151,10 +151,13 @@ class OpenAIClient:
             try:
                 if self._use_responses_api:
                     span.set_attribute("api", "responses")
+                    # We now inject the ticker facts into the user prompt as
+                    # ground truth, so we no longer need the hosted web_search
+                    # tool — and prompts.py explicitly tells the model it has
+                    # no web access.
                     resp = self._client.responses.create(
                         model=self._model,
                         input=messages,
-                        tools=[{"type": "web_search"}],
                     )
                     text = resp.output_text
                     finish_reason = getattr(resp, "status", None)
