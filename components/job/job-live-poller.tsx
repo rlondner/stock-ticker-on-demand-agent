@@ -45,6 +45,7 @@ export function JobLivePoller({ initialJob }: { initialJob: SerializedJob }) {
         status={job.status}
         recommendation={job.recommendation}
         summary={job.result?.summary ?? null}
+        snapshot={job.result?.snapshot ?? null}
       />
 
       {(job.status === "pending" || job.status === "running") && (
