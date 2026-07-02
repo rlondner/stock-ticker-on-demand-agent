@@ -7,6 +7,9 @@ import { AnalystSentiment } from "./analyst-sentiment";
 import { formatCompactDate } from "@/lib/ui/format-timestamp";
 import type { SerializedJob } from "@/lib/job/types";
 
+// Captured outside the component so it is a stable constant during render.
+const SESSION_START_MS = Date.now();
+
 export function JobLivePoller({ initialJob }: { initialJob: SerializedJob }) {
   const [job, setJob] = useState<SerializedJob>(initialJob);
 
@@ -22,10 +25,11 @@ export function JobLivePoller({ initialJob }: { initialJob: SerializedJob }) {
     return () => clearInterval(id);
   }, [job.id, job.status]);
 
+  const endMs = job.completedAt
+    ? new Date(job.completedAt).getTime()
+    : SESSION_START_MS;
   const elapsedSeconds = Math.round(
-    ((job.completedAt ? new Date(job.completedAt).getTime() : Date.now()) -
-      new Date(job.createdAt).getTime()) /
-      1000,
+    (endMs - new Date(job.createdAt).getTime()) / 1000,
   );
 
   const lastUpdatedLabel = job.completedAt
