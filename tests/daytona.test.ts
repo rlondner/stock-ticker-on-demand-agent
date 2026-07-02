@@ -2,7 +2,15 @@ import { describe, it, expect, vi, beforeEach, beforeAll } from "vitest";
 import { trace } from "@opentelemetry/api";
 import { BasicTracerProvider } from "@opentelemetry/sdk-trace-base";
 
-const createMock = vi.fn(async () => ({ id: "sb-12345" }));
+const createSessionMock = vi.fn(async (_id: string) => {});
+const executeSessionCommandMock = vi.fn(async () => ({ cmdId: "cmd-1" }));
+const createMock = vi.fn(async () => ({
+  id: "sb-12345",
+  process: {
+    createSession: createSessionMock,
+    executeSessionCommand: executeSessionCommandMock,
+  },
+}));
 
 vi.mock("@daytonaio/sdk", () => ({
   Daytona: vi.fn(function (this: any) {
@@ -30,6 +38,20 @@ describe("spawnAnalysisSandbox", () => {
     delete process.env.DD_EXPORTER;
     delete process.env.DD_OTLP_ENDPOINT;
     createMock.mockClear();
+    createSessionMock.mockClear();
+    executeSessionCommandMock.mockClear();
+  });
+
+  it("kicks off python /app/agent.py in a background session", async () => {
+    const { spawnAnalysisSandbox } = await import("@/lib/daytona");
+    const span = trace.getTracer("t").startSpan("p");
+    await spawnAnalysisSandbox("job-kick", span);
+    span.end();
+    expect(createSessionMock).toHaveBeenCalledWith("agent-job-kick");
+    expect(executeSessionCommandMock).toHaveBeenCalledWith("agent-job-kick", {
+      command: "python /app/agent.py",
+      runAsync: true,
+    });
   });
 
   it("returns the sandbox id and passes JOB_ID + TRACEPARENT", async () => {
