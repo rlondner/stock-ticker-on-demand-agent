@@ -10,6 +10,7 @@ from openai import OpenAI, APIError, RateLimitError, APIConnectionError, Interna
 from opentelemetry import trace
 from .prompts import SYSTEM_PROMPT, user_prompt
 from .observability import get_host, emit_metric, emit_log
+from .finance import Snapshot, fetch_snapshot
 
 logger = logging.getLogger(__name__)
 
@@ -137,14 +138,14 @@ class OpenAIClient:
         )),
         reraise=True,
     )
-    def analyze(self, ticker: str) -> Analysis:
+    def analyze(self, ticker: str, snapshot: Snapshot | None = None) -> Analysis:
         tracer = trace.get_tracer("stock-agent")
         with tracer.start_as_current_span("llm.analyze") as span:
             span.set_attribute("host", get_host())
             span.set_attribute("model", self._model)
             messages = [
                 {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt(ticker)},
+                {"role": "user", "content": user_prompt(ticker, snapshot=snapshot)},
             ]
             request_started_at = time.perf_counter()
             try:
@@ -190,5 +191,10 @@ class OpenAIClient:
                 )
 
 def run_analysis(ticker: str) -> dict:
+    snapshot = fetch_snapshot(ticker)
     client: LLMClient = OpenAIClient()
-    return client.analyze(ticker).model_dump()
+    analysis = client.analyze(ticker, snapshot=snapshot)
+    return {
+        **analysis.model_dump(),
+        "snapshot": snapshot.model_dump() if snapshot else None,
+    }
