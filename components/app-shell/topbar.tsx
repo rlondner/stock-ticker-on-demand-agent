@@ -31,10 +31,10 @@ export function Topbar() {
           />
         </div>
         <div className="flex items-center gap-4">
-          <button type="button" className="text-af-on-surface-variant hover:text-af-on-surface transition-colors">
+          <button type="button" aria-label="Notifications" className="text-af-on-surface-variant hover:text-af-on-surface transition-colors">
             <span className="material-symbols-outlined">notifications</span>
           </button>
-          <button type="button" className="text-af-on-surface-variant hover:text-af-on-surface transition-colors">
+          <button type="button" aria-label="Settings" className="text-af-on-surface-variant hover:text-af-on-surface transition-colors">
             <span className="material-symbols-outlined">settings</span>
           </button>
           <div className="w-8 h-8 rounded-full bg-af-surface-container-high border border-af-outline-variant" aria-hidden />
