@@ -19,7 +19,7 @@ describe("statusPillProps", () => {
   it("maps complete to the primary-container dark pill", () => {
     expect(statusPillProps("complete")).toEqual({
       label: "Complete",
-      className: "bg-af-primary-container text-af-on-primary",
+      className: "bg-af-primary-container text-af-on-primary-container",
     });
   });
 
