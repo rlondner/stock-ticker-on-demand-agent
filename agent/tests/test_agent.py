@@ -4,6 +4,7 @@ import pytest
 import psycopg
 from unittest.mock import patch
 from lib.llm import Analysis, Signal
+from lib.finance import Snapshot
 
 @pytest.fixture
 def neon_url():
@@ -73,6 +74,7 @@ def test_main_writes_failed_on_llm_error(neon_url, fresh_job, monkeypatch):
     monkeypatch.setenv("NEON_DATABASE_URL", neon_url)
 
     with patch("lib.llm.OpenAIClient.analyze", side_effect=RuntimeError("LLM blew up")), \
+         patch("lib.llm.fetch_snapshot", return_value=None), \
          patch("lib.self_delete.self_delete"):
         import importlib, agent
         importlib.reload(agent)
@@ -83,8 +85,6 @@ def test_main_writes_failed_on_llm_error(neon_url, fresh_job, monkeypatch):
         row = conn.execute("SELECT status, error FROM jobs WHERE id=%s", (fresh_job,)).fetchone()
     assert row[0] == "failed"
     assert "LLM blew up" in row[1]
-
-from lib.finance import Snapshot
 
 
 def _fake_snapshot() -> Snapshot:
