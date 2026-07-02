@@ -4,6 +4,7 @@ import pytest
 import psycopg
 from unittest.mock import patch
 from lib.llm import Analysis, Signal
+from lib.finance import Snapshot
 
 @pytest.fixture
 def neon_url():
@@ -73,6 +74,7 @@ def test_main_writes_failed_on_llm_error(neon_url, fresh_job, monkeypatch):
     monkeypatch.setenv("NEON_DATABASE_URL", neon_url)
 
     with patch("lib.llm.OpenAIClient.analyze", side_effect=RuntimeError("LLM blew up")), \
+         patch("lib.llm.fetch_snapshot", return_value=None), \
          patch("lib.self_delete.self_delete"):
         import importlib, agent
         importlib.reload(agent)
@@ -83,3 +85,58 @@ def test_main_writes_failed_on_llm_error(neon_url, fresh_job, monkeypatch):
         row = conn.execute("SELECT status, error FROM jobs WHERE id=%s", (fresh_job,)).fetchone()
     assert row[0] == "failed"
     assert "LLM blew up" in row[1]
+
+
+def _fake_snapshot() -> Snapshot:
+    return Snapshot(
+        company_name="MongoDB, Inc.",
+        close=342.15,
+        previous_close=346.44,
+        change_pct=-1.24,
+        currency="USD",
+        as_of="2026-07-02T12:00:00Z",
+    )
+
+
+def test_main_persists_snapshot_when_fetch_succeeds(neon_url, fresh_job, monkeypatch):
+    monkeypatch.setenv("JOB_ID", fresh_job)
+    monkeypatch.setenv("NEON_DATABASE_URL", neon_url)
+
+    with patch("lib.llm.OpenAIClient.analyze", return_value=FAKE_ANALYSIS), \
+         patch("lib.llm.fetch_snapshot", return_value=_fake_snapshot()), \
+         patch("lib.self_delete.self_delete"):
+        import importlib
+        import agent
+        importlib.reload(agent)
+        agent.main()
+
+    with psycopg.connect(neon_url) as conn:
+        row = conn.execute(
+            "SELECT status, result FROM jobs WHERE id=%s", (fresh_job,)
+        ).fetchone()
+    assert row[0] == "complete"
+    assert row[1]["summary"] == "strong"
+    assert row[1]["snapshot"]["company_name"] == "MongoDB, Inc."
+    assert row[1]["snapshot"]["close"] == 342.15
+    assert row[1]["snapshot"]["change_pct"] == -1.24
+
+
+def test_main_persists_none_snapshot_when_fetch_fails(neon_url, fresh_job, monkeypatch):
+    """Best-effort: LLM still runs, result.snapshot is None, job completes."""
+    monkeypatch.setenv("JOB_ID", fresh_job)
+    monkeypatch.setenv("NEON_DATABASE_URL", neon_url)
+
+    with patch("lib.llm.OpenAIClient.analyze", return_value=FAKE_ANALYSIS), \
+         patch("lib.llm.fetch_snapshot", return_value=None), \
+         patch("lib.self_delete.self_delete"):
+        import importlib
+        import agent
+        importlib.reload(agent)
+        agent.main()
+
+    with psycopg.connect(neon_url) as conn:
+        row = conn.execute(
+            "SELECT status, result FROM jobs WHERE id=%s", (fresh_job,)
+        ).fetchone()
+    assert row[0] == "complete"
+    assert row[1]["snapshot"] is None
