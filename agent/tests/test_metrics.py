@@ -89,6 +89,36 @@ def test_http_hook_records_request(monkeypatch):
     assert points[0].attributes["status_code"] == 200
 
 
+def test_metrics_otlp_reader_added_when_resolver_returns(monkeypatch):
+    import importlib, lib.metrics as m
+    from opentelemetry.sdk.resources import Resource
+    importlib.reload(m)
+    monkeypatch.setattr(m, "resolve_otlp_target",
+                        lambda signal: ("https://otlp.example/v1/metrics", {"dd-api-key": "k"}) if signal == "metrics" else None)
+    m.init_metrics(Resource.create({"service.name": "test"}))
+    # A periodic OTLP reader should have been constructed and attached.
+    assert m._meter is not None
+
+
+def test_record_llm_duration_histogram(monkeypatch):
+    import importlib, lib.metrics as m
+    from opentelemetry.sdk.resources import Resource
+    from opentelemetry.sdk.metrics.export import InMemoryMetricReader
+    importlib.reload(m)
+    reader = InMemoryMetricReader()
+    m.init_metrics(Resource.create({"service.name": "test"}), extra_readers=[reader])
+    m.record_llm_duration("gpt-4.1-mini", "responses", 512.0, "AAPL")
+    points = []
+    for rm in reader.get_metrics_data().resource_metrics:
+        for sm in rm.scope_metrics:
+            for metric in sm.metrics:
+                if metric.name == "llm.duration_ms":
+                    points.extend(metric.data.data_points)
+    assert points[0].sum == 512.0
+    assert points[0].attributes == {"model": "gpt-4.1-mini", "api": "responses", "ticker": "AAPL"}
+    assert "job_id" not in points[0].attributes
+
+
 def test_sentry_mirror_calls_count_with_attributes(monkeypatch):
     """Sentry mirror uses count(..., attributes=) — not incr/tags — and never passes job_id."""
     import importlib, lib.metrics as m

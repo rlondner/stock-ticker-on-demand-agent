@@ -7,6 +7,8 @@ import os
 import time
 from contextvars import ContextVar
 
+from .otlp_target import resolve_otlp_target
+
 _meter = None
 _meter_provider = None
 _instruments: dict = {}
@@ -14,16 +16,6 @@ _sentry_metrics_enabled = False
 _current_ticker: ContextVar[str] = ContextVar("current_ticker", default="unknown")
 _http_starts: dict = {}
 
-
-def _metrics_endpoint(traces_endpoint: str) -> str:
-    """Derive the OTLP metrics URL from the OTLP traces URL. Explicit override
-    via DD_OTLP_METRICS_ENDPOINT wins."""
-    override = os.environ.get("DD_OTLP_METRICS_ENDPOINT")
-    if override:
-        return override
-    if traces_endpoint.endswith("/v1/traces"):
-        return traces_endpoint[: -len("/v1/traces")] + "/v1/metrics"
-    return traces_endpoint
 
 
 def init_metrics(resource, extra_readers=None) -> None:
@@ -37,16 +29,14 @@ def init_metrics(resource, extra_readers=None) -> None:
 
     readers = list(extra_readers or [])
 
-    dd_key = os.environ.get("DD_API_KEY")
-    dd_disabled = os.environ.get("DD_TRACE_ENABLED", "").strip().lower() == "false"
-    dd_exporter = (os.environ.get("DD_EXPORTER") or "agent").strip().lower()
-    otlp_endpoint = os.environ.get("DD_OTLP_ENDPOINT")
-    if dd_key and not dd_disabled and dd_exporter == "otlp" and otlp_endpoint:
+    target = resolve_otlp_target("metrics")
+    if target is not None:
+        endpoint, headers = target
         from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
         from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
         readers.append(PeriodicExportingMetricReader(OTLPMetricExporter(
-            endpoint=_metrics_endpoint(otlp_endpoint),
-            headers={"DD-API-KEY": dd_key},
+            endpoint=endpoint,
+            headers=headers,
         )))
 
     _meter_provider = MeterProvider(resource=resource, metric_readers=readers)
@@ -63,6 +53,7 @@ def init_metrics(resource, extra_readers=None) -> None:
         "llm_tokens_out": _meter.create_histogram("llm.tokens_out"),
         "llm_calls": _meter.create_counter("llm.calls"),
         "llm_empty_response": _meter.create_counter("llm.empty_response"),
+        "llm_duration_ms": _meter.create_histogram("llm.duration_ms", unit="ms"),
         "http_requests": _meter.create_counter("agent.http.requests"),
         "http_duration_ms": _meter.create_histogram("agent.http.duration_ms", unit="ms"),
     }
@@ -161,6 +152,12 @@ def record_llm_empty_response(model: str, api: str, ticker: str) -> None:
     attrs = {"model": model, "api": api, "ticker": ticker}
     _add("llm_empty_response", 1, attrs)
     _sentry_incr("llm.empty_response", 1, attrs)
+
+
+def record_llm_duration(model: str, api: str, duration_ms: float, ticker: str) -> None:
+    attrs = {"model": model, "api": api, "ticker": ticker}
+    _hist("llm_duration_ms", duration_ms, attrs)
+    _sentry_dist("llm.duration_ms", duration_ms, attrs)
 
 
 def record_http_request(host: str, status_code: int, duration_ms: float, ticker: str) -> None:
