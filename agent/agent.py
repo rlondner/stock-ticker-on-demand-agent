@@ -3,7 +3,7 @@ import sys
 import time
 import traceback
 from opentelemetry import trace
-from lib.observability import init_observability, flush_observability, record_error, emit_log, emit_metric, get_host
+from lib.observability import init_observability, flush_observability, record_error, emit_log, get_host
 from lib.db import get_job, mark_running, mark_complete, mark_failed
 from lib.llm import run_analysis
 import lib.metrics as _metrics
@@ -31,7 +31,11 @@ EXPECTED_ENV_VARS = (
     "DD_ENV",
     "DD_TRACE_ENABLED",
     "DD_EXPORTER",
-    "DD_OTLP_ENDPOINT",
+    "OTEL_EXPORTER_OTLP_ENDPOINT",
+    "OTEL_EXPORTER_OTLP_HEADERS",
+    "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+    "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+    "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
     "AGENT_SOURCE",
 )
 
@@ -82,7 +86,6 @@ def main() -> None:
             raise
         finally:
             duration_ms = (time.perf_counter() - started_at) * 1000
-            emit_metric("agent.duration_ms", duration_ms, final_status=final_status)
             emit_log(
                 "info",
                 "agent.finished",

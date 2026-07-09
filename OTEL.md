@@ -16,7 +16,7 @@ single distributed trace spans **frontend → agent**.
 |----------|---------------------|---------------------|--------------------------------------------------|
 | Traces   | ✅ Fully tracked    | Sentry + Datadog    | 5 manual spans + broad auto-instrumentation      |
 | Logs     | ⚠️ Minimal          | Sentry + Datadog    | Correlated to traces, not a dedicated log pipeline |
-| Metrics  | ✅ Implemented      | Sentry + Datadog    | Dual-emit facade (OTLP + Sentry Application Metrics) |
+| Metrics  | ✅ Implemented      | Sentry + Datadog    | OTLP export (all signals unified) + Sentry Application Metrics |
 
 ## Dependencies
 
@@ -82,15 +82,17 @@ Tracer: `trace.get_tracer("stock-agent")` (setup in `agent/lib/observability.py`
   Subprocess mode also writes raw logs to `agent/.runs/<jobId>.log`.
 - **Next.js**: no structured logger — only `console` in a migration script.
 
-There is **no dedicated OTLP log-export pipeline**; logs primarily ride along as
-trace context / breadcrumbs rather than being shipped as a first-class log stream.
+The Python agent ships logs as a first-class signal via the OTel `LoggerProvider`
+and an OTLP HTTP exporter (same `OTEL_EXPORTER_OTLP_*` resolver used for traces and
+metrics). Next.js has no dedicated log pipeline — logs ride as trace context /
+breadcrumbs only.
 
 ## Metrics
 
-Custom metrics are dual-emitted through a facade in each service: OTel `Meter`
-instruments exported via a periodic OTLP-HTTP reader (gated like the OTLP trace
-path) **and** Sentry's Application Metrics API (auto-on with the service DSN).
-`job_id` is never a metric tag; `ticker` is tagged on all metrics.
+Custom metrics are emitted through OTel `Meter` instruments in each service and
+exported via a periodic OTLP-HTTP reader (same `OTEL_EXPORTER_OTLP_*` resolver as
+traces and logs) **and** Sentry's Application Metrics API (auto-on with the service
+DSN). `job_id` is never a metric tag; `ticker` is tagged on all metrics.
 
 | Metric | Type | Service | Tags |
 |---|---|---|---|
@@ -117,9 +119,12 @@ Facade modules: `lib/observability/metrics.ts` (Next.js), `agent/lib/metrics.py`
 ### Datadog (`DD_API_KEY` is the master switch — unset = fully disabled)
 - Next.js `dd-trace` → local Datadog Agent at `localhost:8126`, service
   `stock-agent-frontend`, `logInjection: true`.
-- Agent `ddtrace` with two transport modes via `DD_EXPORTER`:
-  1. `agent` (default): `patch_all(httpx, psycopg, openai, logging)` → `localhost:8126`
-  2. `otlp`: direct to `DD_OTLP_ENDPOINT` (no local Agent required; for sandboxes)
+- **Python agent** — all three signals (traces, metrics, logs) export via standard
+  OTLP HTTP, resolved from the `OTEL_EXPORTER_OTLP_*` env vars.  If those vars are
+  unset and `DD_API_KEY` is set (and `DD_TRACE_ENABLED != false`), all three signals
+  auto-target Datadog's agentless intake (`https://otlp.<DD_SITE>/v1/<signal>`) with
+  a `dd-api-key` header — no local Agent required.
+  - `DD_EXPORTER=agent` opts into the local Datadog Agent on `:8126` instead.
 - Other vars: `DD_SITE`, `DD_SERVICE`, `DD_ENV`, `DD_TRACE_ENABLED`.
 
 ### Trace propagation

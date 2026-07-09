@@ -9,7 +9,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 from openai import OpenAI, APIError, RateLimitError, APIConnectionError, InternalServerError
 from opentelemetry import trace
 from .prompts import SYSTEM_PROMPT, user_prompt
-from .observability import get_host, emit_metric, emit_log
+from .observability import get_host, emit_log
 from .finance import Snapshot, fetch_snapshot
 from . import metrics
 
@@ -197,11 +197,10 @@ class OpenAIClient:
                 metrics.record_llm_call(self._model, api, "error", ticker)
                 raise
             finally:
-                emit_metric(
-                    "llm.duration_ms",
+                metrics.record_llm_duration(
+                    self._model, api,
                     (time.perf_counter() - request_started_at) * 1000,
-                    model=self._model,
-                    api="responses" if self._use_responses_api else "chat.completions",
+                    ticker,
                 )
 
 def run_analysis(ticker: str) -> dict:
