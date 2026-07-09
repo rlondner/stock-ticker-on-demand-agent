@@ -1,6 +1,7 @@
 import logging
 import os
 import socket
+import threading
 from opentelemetry import trace, propagate, context as ot_context
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
@@ -146,55 +147,17 @@ def _dd_common_tags() -> list[str]:
     return tags
 
 
-def _datadog_log(level: str, message: str, attributes: dict) -> None:
-    """Fire-and-forget POST to Datadog's HTTP log intake. Tiny timeout — this
-    is a demo agent that self-deletes; we don't queue or retry."""
-    if not _dd_enabled():
-        return
-    try:
-        import httpx
-        payload = {
-            "ddsource": "python",
-            "service": os.environ.get("DD_SERVICE", "stock-agent"),
-            "hostname": get_host(),
-            "status": level,
-            "message": message,
-            "ddtags": ",".join(_dd_common_tags()),
-            **attributes,
-        }
-        httpx.post(
-            f"https://http-intake.logs.{_dd_site()}/api/v2/logs",
-            headers={
-                "DD-API-KEY": os.environ["DD_API_KEY"],
-                "Content-Type": "application/json",
-            },
-            json=[payload],
-            timeout=3,
-        )
-    except Exception:
-        pass
+# DD reserved top-level keys — user attributes must not overwrite them.
+_DD_RESERVED_LOG_KEYS = frozenset({"ddsource", "service", "hostname", "status", "message", "ddtags"})
 
 
-def _datadog_metric(name: str, value: float, tags: list[str] | None = None) -> None:
-    """Fire-and-forget POST to Datadog's HTTP metrics intake as a gauge point.
-    Uses the modern v2/series shape (type 3 = gauge)."""
-    if not _dd_enabled():
-        return
+def _post_dd(url: str, payload) -> None:
+    """Synchronous POST body used by the background dispatcher below. Errors are
+    swallowed — the agent self-deletes and we don't queue or retry."""
     try:
-        import time as _time
         import httpx
-        merged_tags = _dd_common_tags() + (tags or [])
-        payload = {
-            "series": [{
-                "metric": name,
-                "type": 3,
-                "points": [{"timestamp": int(_time.time()), "value": float(value)}],
-                "tags": merged_tags,
-                "resources": [{"type": "host", "name": get_host()}],
-            }],
-        }
         httpx.post(
-            f"https://api.{_dd_site()}/api/v2/series",
+            url,
             headers={
                 "DD-API-KEY": os.environ["DD_API_KEY"],
                 "Content-Type": "application/json",
@@ -204,6 +167,52 @@ def _datadog_metric(name: str, value: float, tags: list[str] | None = None) -> N
         )
     except Exception:
         pass
+
+
+def _dispatch_dd(url: str, payload) -> None:
+    """Fire-and-forget dispatch on a daemon thread so callers never block on
+    Datadog's HTTP intake. Safe to call from the LLM hot path."""
+    threading.Thread(target=_post_dd, args=(url, payload), daemon=True).start()
+
+
+def _datadog_log(level: str, message: str, attributes: dict) -> None:
+    """Fire-and-forget POST to Datadog's HTTP log intake. Dispatched on a daemon
+    thread so the caller returns immediately."""
+    if not _dd_enabled():
+        return
+    # Namespace caller attributes under 'attributes' so keys like 'message' or
+    # 'ddtags' from a caller can't overwrite the reserved DD top-level fields.
+    safe_attrs = {k: v for k, v in attributes.items() if k not in _DD_RESERVED_LOG_KEYS}
+    payload = {
+        "ddsource": "python",
+        "service": os.environ.get("DD_SERVICE", "stock-agent"),
+        "hostname": get_host(),
+        "status": level,
+        "message": message,
+        "ddtags": ",".join(_dd_common_tags()),
+        **safe_attrs,
+    }
+    _dispatch_dd(f"https://http-intake.logs.{_dd_site()}/api/v2/logs", [payload])
+
+
+def _datadog_metric(name: str, value: float, tags: list[str] | None = None) -> None:
+    """Fire-and-forget POST to Datadog's HTTP metrics intake as a gauge point.
+    Uses the modern v2/series shape (type 3 = gauge). Dispatched on a daemon
+    thread so the caller returns immediately."""
+    if not _dd_enabled():
+        return
+    import time as _time
+    merged_tags = _dd_common_tags() + (tags or [])
+    payload = {
+        "series": [{
+            "metric": name,
+            "type": 3,
+            "points": [{"timestamp": int(_time.time()), "value": float(value)}],
+            "tags": merged_tags,
+            "resources": [{"type": "host", "name": get_host()}],
+        }],
+    }
+    _dispatch_dd(f"https://api.{_dd_site()}/api/v2/series", payload)
 
 
 def emit_log(level: str, message: str, **attributes) -> None:
