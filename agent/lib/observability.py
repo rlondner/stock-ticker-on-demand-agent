@@ -13,7 +13,7 @@ _stdlib_logger = logging.getLogger("stock-agent")
 _initialized = False
 _sentry_inited = False
 _dd_inited = False
-_dd_otlp_inited = False
+_otlp_traces_inited = False
 _logger_provider = None
 
 
@@ -26,7 +26,7 @@ def get_host() -> str:
 def init_observability(job_id: str) -> None:
     """Initialize OTel and any configured exporters (Sentry/Datadog).
     Idempotent - safe to call multiple times."""
-    global _initialized, _sentry_inited, _dd_inited, _dd_otlp_inited
+    global _initialized, _sentry_inited, _dd_inited, _otlp_traces_inited
     if _initialized:
         return
 
@@ -68,48 +68,40 @@ def init_observability(job_id: str) -> None:
         global _sentry_inited
         _sentry_inited = True
 
-    # === Datadog exporter ===
+    # === Datadog / OTLP trace exporter ===
     # DD_EXPORTER picks how traces reach Datadog:
-    #   'agent' (default): ddtrace.patch_all → ships to a local Datadog Agent on
+    #   'agent' (opt-in): ddtrace.patch_all → ships to a local Datadog Agent on
     #     localhost:8126. Auto-instruments httpx/psycopg/openai/logging. Requires
-    #     an Agent reachable from this process. Set DD_TRACE_ENABLED=false to
-    #     short-circuit when no Agent is running.
-    #   'otlp': OTLP-HTTP exporter ships spans directly to Datadog's intake.
-    #     No Agent needed (good for Daytona sandboxes). Only the explicit OTel
-    #     spans we create get shipped — no auto-instrumented HTTP/DB/OpenAI spans.
-    #     Requires DD_OTLP_ENDPOINT (the exact intake URL from Datadog's docs)
-    #     and DD_API_KEY.
-    dd_key = os.environ.get("DD_API_KEY")
+    #     DD_API_KEY and an Agent reachable from this process. Set
+    #     DD_TRACE_ENABLED=false to short-circuit when no Agent is running.
+    #   'otlp' (default): OTLP-HTTP exporter driven by resolve_otlp_target("traces").
+    #     No Agent needed (good for Daytona sandboxes). OTel-native auto-instrumentation
+    #     (httpx/psycopg/openai) is activated when available.
     dd_disabled = os.environ.get("DD_TRACE_ENABLED", "").strip().lower() == "false"
-    dd_exporter = (os.environ.get("DD_EXPORTER") or "agent").strip().lower()
+    dd_exporter = (os.environ.get("DD_EXPORTER") or "otlp").strip().lower()
     if dd_exporter not in ("agent", "otlp"):
         raise ValueError(
             f"DD_EXPORTER={dd_exporter!r} is not valid; expected 'agent' or 'otlp'"
         )
-    if dd_key and not dd_disabled:
-        if dd_exporter == "agent":
-            import ddtrace
-            ddtrace.config.service = os.environ.get("DD_SERVICE", "stock-agent")
-            ddtrace.config.env = os.environ.get("DD_ENV", "development")
-            os.environ.setdefault("DD_TRACE_OTEL_ENABLED", "true")
-            ddtrace.patch_all(httpx=True, psycopg=True, openai=True, logging=True)
-            global _dd_inited
-            _dd_inited = True
-        else:  # dd_exporter == "otlp"
-            otlp_endpoint = os.environ.get("DD_OTLP_ENDPOINT")
-            if not otlp_endpoint:
-                raise ValueError(
-                    "DD_EXPORTER=otlp requires DD_OTLP_ENDPOINT to be set to "
-                    "Datadog's OTLP HTTP intake URL (see your Datadog docs; "
-                    "the path has shifted across Datadog versions)"
-                )
+    if dd_exporter == "agent" and os.environ.get("DD_API_KEY") and not dd_disabled:
+        import ddtrace
+        ddtrace.config.service = os.environ.get("DD_SERVICE", "stock-agent")
+        ddtrace.config.env = os.environ.get("DD_ENV", "development")
+        os.environ.setdefault("DD_TRACE_OTEL_ENABLED", "true")
+        ddtrace.patch_all(httpx=True, psycopg=True, openai=True, logging=True)
+        global _dd_inited
+        _dd_inited = True
+    else:
+        _trace_target = resolve_otlp_target("traces")
+        if _trace_target is not None:
+            endpoint, headers = _trace_target
             from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
             provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(
-                endpoint=otlp_endpoint,
-                headers={"DD-API-KEY": dd_key},
+                endpoint=endpoint, headers=headers,
             )))
-            global _dd_otlp_inited
-            _dd_otlp_inited = True
+            global _otlp_traces_inited
+            _otlp_traces_inited = True
+        _install_trace_instrumentors()
 
     # Logs: OTel LoggerProvider bridged from stdlib; OTLP export via resolver.
     try:
@@ -163,6 +155,22 @@ def _dd_common_tags() -> list[str]:
     if job_id:
         tags.append(f"job_id:{job_id}")
     return tags
+
+
+def _install_trace_instrumentors() -> None:
+    """Activate OTel-native auto-instrumentation for outbound HTTP, Postgres, and
+    OpenAI against the current TracerProvider (used in OTLP mode, where ddtrace's
+    patch_all is not active). Each is guarded independently."""
+    for mod_path, cls_name in (
+        ("opentelemetry.instrumentation.httpx", "HTTPXClientInstrumentor"),
+        ("opentelemetry.instrumentation.psycopg", "PsycopgInstrumentor"),
+        ("opentelemetry.instrumentation.openai", "OpenAIInstrumentor"),
+    ):
+        try:
+            mod = __import__(mod_path, fromlist=[cls_name])
+            getattr(mod, cls_name)().instrument()
+        except Exception:
+            pass
 
 
 def _install_log_bridge(logger_provider) -> None:
