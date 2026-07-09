@@ -211,3 +211,97 @@ def test_fetch_snapshot_sets_failure_span_attributes():
 
     fake_span.set_attribute.assert_any_call("snapshot.fetched", False)
     fake_span.set_attribute.assert_any_call("snapshot.ticker", "XXXX")
+
+
+# --- Metrics emission tests ---
+
+def _spy_snapshot_metrics(monkeypatch):
+    """Patch the four snapshot emitters on the metrics module and capture calls."""
+    from lib import metrics
+    calls = {"fetch": [], "backfilled": [], "field_missing": [], "completeness": []}
+    monkeypatch.setattr(metrics, "record_snapshot_fetch",
+                        lambda outcome, ticker, duration_ms: calls["fetch"].append((outcome, ticker)))
+    monkeypatch.setattr(metrics, "record_snapshot_backfilled",
+                        lambda ticker: calls["backfilled"].append(ticker))
+    monkeypatch.setattr(metrics, "record_snapshot_field_missing",
+                        lambda field, ticker: calls["field_missing"].append(field))
+    monkeypatch.setattr(metrics, "record_snapshot_completeness",
+                        lambda populated, ticker: calls["completeness"].append(populated))
+    return calls
+
+
+def test_fetch_snapshot_emits_success_metrics(monkeypatch):
+    from lib import finance
+    calls = _spy_snapshot_metrics(monkeypatch)
+    fake_ticker = MagicMock()
+    fake_ticker.info = dict(_HAPPY_INFO)
+    with patch.object(finance, "yfinance") as yf:
+        yf.Ticker.return_value = fake_ticker
+        finance.fetch_snapshot("MDB")
+    assert calls["fetch"] == [("success", "MDB")]
+    assert calls["backfilled"] == []          # regularMarketPrice present → no fallback
+    assert calls["field_missing"] == []       # _HAPPY_INFO fills all 12 key fields
+    assert calls["completeness"] == [12]
+
+
+def test_fetch_snapshot_emits_backfilled_on_history_fallback(monkeypatch):
+    from lib import finance
+    calls = _spy_snapshot_metrics(monkeypatch)
+    info_without_prices = {k: v for k, v in _HAPPY_INFO.items() if not k.startswith("regularMarket")}
+    fake_ticker = MagicMock()
+    fake_ticker.info = info_without_prices
+    history_df = MagicMock()
+    history_df.empty = False
+    close_col = MagicMock()
+    close_col.iloc = [None, None, None, 346.44, 342.15]
+    history_df.__getitem__.return_value = close_col
+    fake_ticker.history.return_value = history_df
+    with patch.object(finance, "yfinance") as yf:
+        yf.Ticker.return_value = fake_ticker
+        finance.fetch_snapshot("MDB")
+    assert calls["fetch"] == [("success", "MDB")]
+    assert calls["backfilled"] == ["MDB"]
+
+
+def test_fetch_snapshot_emits_field_missing_and_completeness_for_partial(monkeypatch):
+    from lib import finance
+    calls = _spy_snapshot_metrics(monkeypatch)
+    minimal_info = {"longName": "Some Co.", "sector": "Utilities", "currency": "USD"}
+    fake_ticker = MagicMock()
+    fake_ticker.info = minimal_info
+    empty_history = MagicMock()
+    empty_history.empty = True
+    fake_ticker.history.return_value = empty_history
+    with patch.object(finance, "yfinance") as yf:
+        yf.Ticker.return_value = fake_ticker
+        finance.fetch_snapshot("SOMECO")
+    assert calls["fetch"] == [("success", "SOMECO")]
+    # Only company_name + sector populated → 10 missing, completeness 2.
+    assert set(calls["field_missing"]) == {
+        "industry", "close", "previous_close", "market_cap",
+        "fifty_two_week_high", "fifty_two_week_low", "average_volume",
+        "analyst_recommendation", "analyst_opinion_count", "business_summary",
+    }
+    assert calls["completeness"] == [2]
+
+
+def test_fetch_snapshot_emits_error_outcome_on_exception(monkeypatch):
+    from lib import finance
+    calls = _spy_snapshot_metrics(monkeypatch)
+    with patch.object(finance, "yfinance") as yf:
+        yf.Ticker.side_effect = RuntimeError("yahoo says no")
+        assert finance.fetch_snapshot("MDB") is None
+    assert calls["fetch"] == [("error", "MDB")]
+    assert calls["backfilled"] == [] and calls["completeness"] == []
+
+
+def test_fetch_snapshot_emits_missing_outcome_on_empty_info(monkeypatch):
+    from lib import finance
+    calls = _spy_snapshot_metrics(monkeypatch)
+    fake_ticker = MagicMock()
+    fake_ticker.info = {}
+    with patch.object(finance, "yfinance") as yf:
+        yf.Ticker.return_value = fake_ticker
+        assert finance.fetch_snapshot("XXXX") is None
+    assert calls["fetch"] == [("missing", "XXXX")]
+    assert calls["completeness"] == []

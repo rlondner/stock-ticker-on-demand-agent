@@ -1,3 +1,4 @@
+import time
 from datetime import datetime, timezone
 from pydantic import BaseModel
 import yfinance
@@ -6,6 +7,15 @@ from opentelemetry import trace
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 from .observability import emit_log
+from . import metrics
+
+# The nullable yfinance-sourced fields used for the field-completeness metrics.
+# currency/as_of are always set and change_pct is derived, so they are excluded.
+_SNAPSHOT_KEY_FIELDS = (
+    "company_name", "sector", "industry", "close", "previous_close", "market_cap",
+    "fifty_two_week_high", "fifty_two_week_low", "average_volume",
+    "analyst_recommendation", "analyst_opinion_count", "business_summary",
+)
 
 
 class Snapshot(BaseModel):
@@ -96,27 +106,31 @@ def _annotate_span_failure(span, ticker: str) -> None:
     retry=retry_if_exception_type(Exception),
     reraise=True,
 )
-def _fetch_snapshot_once(ticker: str) -> Snapshot | None:
+def _fetch_snapshot_once(ticker: str) -> tuple[Snapshot | None, bool]:
     t = yfinance.Ticker(ticker)
     info = t.info or {}
     if not info:
-        return None
+        return None, False
     snap = _snapshot_from_info(info)
+    backfilled = False
     if snap.close is None or snap.previous_close is None:
         close, previous = _backfill_from_history(t)
-        if snap.close is None:
+        if snap.close is None and close is not None:
             snap = snap.model_copy(update={"close": close})
-        if snap.previous_close is None:
+            backfilled = True
+        if snap.previous_close is None and previous is not None:
             snap = snap.model_copy(update={"previous_close": previous})
+            backfilled = True
         snap = snap.model_copy(update={"change_pct": _derive_change_pct(snap.close, snap.previous_close)})
-    return snap
+    return snap, backfilled
 
 
 def fetch_snapshot(ticker: str) -> Snapshot | None:
     """Best-effort ticker snapshot. Never raises. Returns None on total failure."""
     span = trace.get_current_span()
+    start = time.monotonic()
     try:
-        snap = _fetch_snapshot_once(ticker)
+        snap, backfilled = _fetch_snapshot_once(ticker)
     except Exception as exc:
         _annotate_span_failure(span, ticker)
         emit_log(
@@ -126,10 +140,23 @@ def fetch_snapshot(ticker: str) -> Snapshot | None:
             reason="exception",
             exception_type=type(exc).__name__,
         )
+        metrics.record_snapshot_fetch("error", ticker, (time.monotonic() - start) * 1000)
         return None
+    duration_ms = (time.monotonic() - start) * 1000
     if snap is None:
         _annotate_span_failure(span, ticker)
         emit_log("warn", "snapshot.missing", ticker=ticker, reason="empty_info")
+        metrics.record_snapshot_fetch("missing", ticker, duration_ms)
         return None
     _annotate_span_success(span, ticker, snap)
+    metrics.record_snapshot_fetch("success", ticker, duration_ms)
+    if backfilled:
+        metrics.record_snapshot_backfilled(ticker)
+    populated = 0
+    for field in _SNAPSHOT_KEY_FIELDS:
+        if getattr(snap, field) is None:
+            metrics.record_snapshot_field_missing(field, ticker)
+        else:
+            populated += 1
+    metrics.record_snapshot_completeness(populated, ticker)
     return snap
