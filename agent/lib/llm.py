@@ -157,7 +157,6 @@ class OpenAIClient:
             request_started_at = time.perf_counter()
             try:
                 if self._use_responses_api:
-                    span.set_attribute("api", "responses")
                     # We now inject the ticker facts into the user prompt as
                     # ground truth, so we no longer need the hosted web_search
                     # tool — and prompts.py explicitly tells the model it has
@@ -169,12 +168,9 @@ class OpenAIClient:
                     text = resp.output_text
                     finish_reason = getattr(resp, "status", None)
                     usage = getattr(resp, "usage", None)
-                    if usage:
-                        span.set_attribute("tokens_in", getattr(usage, "input_tokens", 0))
-                        span.set_attribute("tokens_out", getattr(usage, "output_tokens", 0))
-                    _require_nonempty(text, api="responses", finish_reason=finish_reason, span=span)
+                    tin = getattr(usage, "input_tokens", 0) if usage else 0
+                    tout = getattr(usage, "output_tokens", 0) if usage else 0
                 else:
-                    span.set_attribute("api", "chat.completions")
                     resp = self._client.chat.completions.create(
                         model=self._model,
                         messages=messages,
@@ -183,15 +179,23 @@ class OpenAIClient:
                     text = choice.message.content
                     finish_reason = choice.finish_reason
                     usage = getattr(resp, "usage", None)
-                    if usage:
-                        span.set_attribute("tokens_in", getattr(usage, "prompt_tokens", 0))
-                        span.set_attribute("tokens_out", getattr(usage, "completion_tokens", 0))
-                    _require_nonempty(text, api="chat.completions", finish_reason=finish_reason, span=span)
+                    tin = getattr(usage, "prompt_tokens", 0) if usage else 0
+                    tout = getattr(usage, "completion_tokens", 0) if usage else 0
+
+                span.set_attribute("tokens_in", tin)
+                span.set_attribute("tokens_out", tout)
+                metrics.record_llm_tokens(self._model, api, tin, tout, ticker)
+                _require_nonempty(text, api=api, finish_reason=finish_reason,
+                                  span=span, model=self._model, ticker=ticker)
 
                 _record_raw_response(span, text, finish_reason)
                 analysis = parse_response(text)
                 _record_parsed_response(span, analysis)
+                metrics.record_llm_call(self._model, api, "ok", ticker)
                 return analysis
+            except Exception:
+                metrics.record_llm_call(self._model, api, "error", ticker)
+                raise
             finally:
                 emit_metric(
                     "llm.duration_ms",
