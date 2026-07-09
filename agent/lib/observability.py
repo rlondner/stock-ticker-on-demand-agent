@@ -112,18 +112,21 @@ def init_observability(job_id: str) -> None:
             _dd_otlp_inited = True
 
     # Logs: OTel LoggerProvider bridged from stdlib; OTLP export via resolver.
-    from opentelemetry.sdk._logs import LoggerProvider
-    from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
-    global _logger_provider
-    _logger_provider = LoggerProvider(resource=resource)
-    _log_target = resolve_otlp_target("logs")
-    if _log_target is not None:
-        endpoint, headers = _log_target
-        from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
-        _logger_provider.add_log_record_processor(BatchLogRecordProcessor(
-            OTLPLogExporter(endpoint=endpoint, headers=headers),
-        ))
-    _install_log_bridge(_logger_provider)
+    try:
+        from opentelemetry.sdk._logs import LoggerProvider
+        from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
+        global _logger_provider
+        _logger_provider = LoggerProvider(resource=resource)
+        _log_target = resolve_otlp_target("logs")
+        if _log_target is not None:
+            endpoint, headers = _log_target
+            from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
+            _logger_provider.add_log_record_processor(BatchLogRecordProcessor(
+                OTLPLogExporter(endpoint=endpoint, headers=headers),
+            ))
+        _install_log_bridge(_logger_provider)
+    except Exception:
+        pass
 
     # Continue the W3C trace from the parent (NextJS) if TRACEPARENT was passed.
     traceparent = os.environ.get("TRACEPARENT")
@@ -176,8 +179,8 @@ def _install_log_bridge(logger_provider) -> None:
 
 def emit_log(level: str, message: str, **attributes) -> None:
     """Emit a structured log to stdlib (always), Sentry Logs (when
-    SENTRY_DSN_AGENT is set), and Datadog HTTP log intake (when DD_API_KEY
-    is set and DD_TRACE_ENABLED != 'false').
+    SENTRY_DSN_AGENT is set), and the OTel LoggerProvider (which exports via
+    OTLP when a logs target is configured).
 
     Every log carries the dynamic OS hostname so origin is visible in each
     backend's UI without joining to trace tags.

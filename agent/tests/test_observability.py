@@ -143,18 +143,24 @@ def test_emit_log_bridges_to_otel_logs(monkeypatch):
     # Prior tests may leave a LoggingHandler on the shared stdlib logger (it is a
     # module-level singleton that survives importlib.reload). Remove any stale OTel
     # handlers so _install_log_bridge's idempotency guard does not short-circuit.
-    for h in list(o._stdlib_logger.handlers):
-        if isinstance(h, LoggingHandler):
-            o._stdlib_logger.removeHandler(h)
+    # Capture the original handler list so we can restore it after the test.
+    original_handlers = list(o._stdlib_logger.handlers)
+    try:
+        for h in list(o._stdlib_logger.handlers):
+            if isinstance(h, LoggingHandler):
+                o._stdlib_logger.removeHandler(h)
 
-    exporter = InMemoryLogExporter()
-    lp = LoggerProvider()
-    lp.add_log_record_processor(SimpleLogRecordProcessor(exporter))
-    o._install_log_bridge(lp)  # attach a stdlib->OTel handler
+        exporter = InMemoryLogExporter()
+        lp = LoggerProvider()
+        lp.add_log_record_processor(SimpleLogRecordProcessor(exporter))
+        o._install_log_bridge(lp)  # attach a stdlib->OTel handler
 
-    o.emit_log("warn", "snapshot.missing", ticker="AAPL")
-    lp.force_flush()
-    # Installed SDK uses get_finished_logs() (brief named get_finished_log_records,
-    # but this SDK version exposes get_finished_logs instead).
-    records = exporter.get_finished_logs()
-    assert any("snapshot.missing" in (r.log_record.body or "") for r in records)
+        o.emit_log("warn", "snapshot.missing", ticker="AAPL")
+        lp.force_flush()
+        # Installed SDK uses get_finished_logs() (brief named get_finished_log_records,
+        # but this SDK version exposes get_finished_logs instead).
+        records = exporter.get_finished_logs()
+        assert any("snapshot.missing" in (r.log_record.body or "") for r in records)
+    finally:
+        # Restore the logger's handler list to what it was before this test.
+        o._stdlib_logger.handlers = original_handlers
