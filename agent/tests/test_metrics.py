@@ -88,3 +88,37 @@ def test_http_hook_records_request(monkeypatch):
     assert points[0].value == 1
     assert points[0].attributes["host"] == "api.openai.com"
     assert points[0].attributes["status_code"] == 200
+
+
+def test_sentry_mirror_calls_count_with_attributes(monkeypatch):
+    """Sentry mirror uses count(..., attributes=) — not incr/tags — and never passes job_id."""
+    import importlib, lib.metrics as m
+    importlib.reload(m)
+    monkeypatch.setenv("SENTRY_DSN_AGENT", "https://test@sentry.io/999")
+    from opentelemetry.sdk.resources import Resource
+    m.init_metrics(Resource.create({"service.name": "test"}))
+
+    import sentry_sdk
+    count_calls = []
+    dist_calls = []
+    monkeypatch.setattr(sentry_sdk.metrics, "count",
+                        lambda name, value, unit=None, attributes=None: count_calls.append((name, value, attributes)))
+    monkeypatch.setattr(sentry_sdk.metrics, "distribution",
+                        lambda name, value, unit=None, attributes=None: dist_calls.append((name, value, attributes)))
+
+    m.record_job_completed("complete", "AAPL")
+
+    assert len(count_calls) == 1
+    name, value, attributes = count_calls[0]
+    assert name == "jobs.completed"
+    assert value == 1
+    assert attributes["ticker"] == "AAPL"
+    assert "job_id" not in attributes
+
+    # Distribution mirror: agent run duration
+    m.record_agent_run_duration("complete", "AAPL", 500.0)
+    assert len(dist_calls) == 1
+    name, value, attributes = dist_calls[0]
+    assert name == "agent.run.duration_ms"
+    assert attributes["ticker"] == "AAPL"
+    assert "job_id" not in attributes
