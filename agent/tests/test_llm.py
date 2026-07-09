@@ -246,3 +246,41 @@ def test_parse_response_handles_inline_fence():
     payload = '```{"recommendation":"sell","summary":"x","signals":[]}```'
     a = parse_response(payload)
     assert a.recommendation == "sell"
+
+
+def test_analyze_emits_llm_metrics(monkeypatch):
+    import importlib, lib.metrics as mtr, lib.llm as llm
+    importlib.reload(mtr)
+    seen = {"tokens": [], "calls": [], "web_search": []}
+    monkeypatch.setattr(mtr, "record_llm_tokens",
+                        lambda model, api, tokens_in, tokens_out, ticker: seen["tokens"].append((model, api, tokens_in, tokens_out, ticker)))
+    monkeypatch.setattr(mtr, "record_llm_call",
+                        lambda model, api, outcome, ticker: seen["calls"].append((model, api, outcome, ticker)))
+    monkeypatch.setattr(mtr, "record_llm_web_search",
+                        lambda api, ticker: seen["web_search"].append((api, ticker)))
+    importlib.reload(llm)
+
+    valid = '{"recommendation":"buy","summary":"s","signals":[]}'
+
+    class FakeResponses:
+        def create(self, **kw):
+            class R:
+                output_text = valid
+                status = "completed"
+                class usage:  # noqa: N801
+                    input_tokens = 100
+                    output_tokens = 40
+            return R()
+
+    class FakeClient:
+        responses = FakeResponses()
+
+    client = llm.OpenAIClient.__new__(llm.OpenAIClient)
+    client._client = FakeClient()
+    client._model = "gpt-4.1-mini"
+    client._use_responses_api = True
+
+    client.analyze("AAPL")
+    assert seen["tokens"] == [("gpt-4.1-mini", "responses", 100, 40, "AAPL")]
+    assert seen["calls"] == [("gpt-4.1-mini", "responses", "ok", "AAPL")]
+    assert seen["web_search"] == [("responses", "AAPL")]
