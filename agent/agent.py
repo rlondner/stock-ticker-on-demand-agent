@@ -3,7 +3,7 @@ import sys
 import time
 import traceback
 from opentelemetry import trace
-from lib.observability import init_observability, flush_observability, record_error, emit_log, emit_metric, get_host
+from lib.observability import init_observability, flush_observability, record_error, emit_log, get_host
 from lib.db import get_job, mark_running, mark_complete, mark_failed
 from lib.llm import run_analysis
 import lib.metrics as _metrics
@@ -47,11 +47,10 @@ def main() -> None:
     init_observability(job_id=JOB_ID)
     tracer = trace.get_tracer("stock-agent")
 
-    started_at = time.perf_counter()
     emit_log("info", "agent.started", job_id=JOB_ID, **_env_presence())
 
     final_status = "unknown"
-    _start = time.monotonic()
+    started_at = time.monotonic()
     with tracer.start_as_current_span("agent.run") as span:
         span.set_attribute("host", get_host())
         span.set_attribute("job_id", JOB_ID)
@@ -67,22 +66,18 @@ def main() -> None:
             mark_running(JOB_ID)
             result = run_analysis(ticker=job["ticker"])
             mark_complete(JOB_ID, recommendation=result["recommendation"], result=result)
-            span.set_attribute("final_status", "complete")
             final_status = "complete"
-            _metrics.record_job_completed("complete", job["ticker"])
-            _metrics.record_agent_run_duration("complete", job["ticker"], (time.monotonic() - _start) * 1000)
         except Exception as e:
             record_error(span, e)
             mark_failed(JOB_ID, error=f"{type(e).__name__}: {e}\n{traceback.format_exc()}")
-            span.set_attribute("final_status", "failed")
-            _ticker = job["ticker"] if job else "unknown"
-            _metrics.record_job_completed("failed", _ticker)
-            _metrics.record_agent_run_duration("failed", _ticker, (time.monotonic() - _start) * 1000)
             final_status = "failed"
             raise
         finally:
-            duration_ms = (time.perf_counter() - started_at) * 1000
-            emit_metric("agent.duration_ms", duration_ms, final_status=final_status)
+            duration_ms = (time.monotonic() - started_at) * 1000
+            ticker = (job["ticker"] if job else "unknown")
+            span.set_attribute("final_status", final_status)
+            _metrics.record_job_completed(final_status, ticker)
+            _metrics.record_agent_run_duration(final_status, ticker, duration_ms)
             emit_log(
                 "info",
                 "agent.finished",

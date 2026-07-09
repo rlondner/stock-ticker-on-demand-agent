@@ -283,7 +283,9 @@ def test_analyze_emits_llm_metrics(monkeypatch):
     client.analyze("AAPL")
     assert seen["tokens"] == [("gpt-4.1-mini", "responses", 100, 40, "AAPL")]
     assert seen["calls"] == [("gpt-4.1-mini", "responses", "ok", "AAPL")]
-    assert seen["web_search"] == [("responses", "AAPL")]
+    # web_search tool is no longer sent on the responses branch — ticker facts
+    # are injected into the prompt as ground truth instead.
+    assert seen["web_search"] == []
 
 
 def test_chat_completions_branch_emits_tokens_and_call(monkeypatch):
