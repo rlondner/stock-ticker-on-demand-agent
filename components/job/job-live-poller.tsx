@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { StockHeader } from "./stock-header";
 import { KeyInsights } from "./key-insights";
-import { RevenueDistribution } from "./revenue-distribution";
+import { RawLLMResponse } from "./raw-llm-response";
 import { AnalystSentiment } from "./analyst-sentiment";
 import { formatCompactDate } from "@/lib/ui/format-timestamp";
 import type { SerializedJob } from "@/lib/job/types";
@@ -75,7 +75,7 @@ export function JobLivePoller({ initialJob }: { initialJob: SerializedJob }) {
         <>
           <KeyInsights signals={job.result?.signals ?? null} lastUpdatedLabel={lastUpdatedLabel} />
           <section className="grid grid-cols-12 gap-6">
-            <RevenueDistribution />
+            <RawLLMResponse result={job.result} />
             <AnalystSentiment />
           </section>
         </>
