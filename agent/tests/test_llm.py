@@ -251,13 +251,11 @@ def test_parse_response_handles_inline_fence():
 def test_analyze_emits_llm_metrics(monkeypatch):
     import importlib, lib.metrics as mtr, lib.llm as llm
     importlib.reload(mtr)
-    seen = {"tokens": [], "calls": [], "web_search": []}
+    seen = {"tokens": [], "calls": []}
     monkeypatch.setattr(mtr, "record_llm_tokens",
                         lambda model, api, tokens_in, tokens_out, ticker: seen["tokens"].append((model, api, tokens_in, tokens_out, ticker)))
     monkeypatch.setattr(mtr, "record_llm_call",
                         lambda model, api, outcome, ticker: seen["calls"].append((model, api, outcome, ticker)))
-    monkeypatch.setattr(mtr, "record_llm_web_search",
-                        lambda api, ticker: seen["web_search"].append((api, ticker)))
     importlib.reload(llm)
 
     valid = '{"recommendation":"buy","summary":"s","signals":[]}'
@@ -283,20 +281,17 @@ def test_analyze_emits_llm_metrics(monkeypatch):
     client.analyze("AAPL")
     assert seen["tokens"] == [("gpt-4.1-mini", "responses", 100, 40, "AAPL")]
     assert seen["calls"] == [("gpt-4.1-mini", "responses", "ok", "AAPL")]
-    assert seen["web_search"] == [("responses", "AAPL")]
 
 
 def test_chat_completions_branch_emits_tokens_and_call(monkeypatch):
     """chat.completions branch emits record_llm_tokens and record_llm_call with api='chat.completions'."""
     import importlib, lib.metrics as mtr, lib.llm as llm
     importlib.reload(mtr)
-    seen = {"tokens": [], "calls": [], "web_search": []}
+    seen = {"tokens": [], "calls": []}
     monkeypatch.setattr(mtr, "record_llm_tokens",
                         lambda model, api, tin, tout, ticker: seen["tokens"].append((model, api, tin, tout, ticker)))
     monkeypatch.setattr(mtr, "record_llm_call",
                         lambda model, api, outcome, ticker: seen["calls"].append((model, api, outcome, ticker)))
-    monkeypatch.setattr(mtr, "record_llm_web_search",
-                        lambda api, ticker: seen["web_search"].append((api, ticker)))
     importlib.reload(llm)
 
     valid = '{"recommendation":"sell","summary":"s","signals":[]}'
@@ -321,8 +316,6 @@ def test_chat_completions_branch_emits_tokens_and_call(monkeypatch):
     client.analyze("TSLA")
     assert seen["tokens"] == [("gpt-4.1-mini", "chat.completions", 50, 25, "TSLA")]
     assert seen["calls"] == [("gpt-4.1-mini", "chat.completions", "ok", "TSLA")]
-    # web_search must NOT be emitted on the chat.completions branch
-    assert seen["web_search"] == []
 
 
 def test_empty_response_emits_record_llm_empty_response(monkeypatch):
@@ -334,7 +327,6 @@ def test_empty_response_emits_record_llm_empty_response(monkeypatch):
                         lambda model, api, ticker: seen["empty"].append((model, api, ticker)))
     monkeypatch.setattr(mtr, "record_llm_tokens", lambda *a, **kw: None)
     monkeypatch.setattr(mtr, "record_llm_call", lambda *a, **kw: None)
-    monkeypatch.setattr(mtr, "record_llm_web_search", lambda *a, **kw: None)
     importlib.reload(llm)
 
     from unittest.mock import MagicMock

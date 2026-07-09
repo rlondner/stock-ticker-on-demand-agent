@@ -63,7 +63,6 @@ def init_metrics(resource, extra_readers=None) -> None:
         "llm_tokens_out": _meter.create_histogram("llm.tokens_out"),
         "llm_calls": _meter.create_counter("llm.calls"),
         "llm_empty_response": _meter.create_counter("llm.empty_response"),
-        "llm_web_search_used": _meter.create_counter("llm.web_search.used"),
         "http_requests": _meter.create_counter("agent.http.requests"),
         "http_duration_ms": _meter.create_histogram("agent.http.duration_ms", unit="ms"),
     }
@@ -162,12 +161,6 @@ def record_llm_empty_response(model: str, api: str, ticker: str) -> None:
     attrs = {"model": model, "api": api, "ticker": ticker}
     _add("llm_empty_response", 1, attrs)
     _sentry_incr("llm.empty_response", 1, attrs)
-
-
-def record_llm_web_search(api: str, ticker: str) -> None:
-    attrs = {"api": api, "ticker": ticker}
-    _add("llm_web_search_used", 1, attrs)
-    _sentry_incr("llm.web_search.used", 1, attrs)
 
 
 def record_http_request(host: str, status_code: int, duration_ms: float, ticker: str) -> None:

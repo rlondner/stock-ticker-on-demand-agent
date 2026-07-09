@@ -65,7 +65,6 @@ def test_no_metric_carries_job_id():
     m.record_llm_tokens("gpt-4.1-mini", "responses", 10, 5, "AAPL")
     m.record_llm_call("gpt-4.1-mini", "responses", "ok", "AAPL")
     m.record_llm_empty_response("gpt-4.1-mini", "responses", "AAPL")
-    m.record_llm_web_search("responses", "AAPL")
     m.record_http_request("api.openai.com", 200, 12.5, "AAPL")
     data = reader.get_metrics_data()
     for rm in data.resource_metrics:

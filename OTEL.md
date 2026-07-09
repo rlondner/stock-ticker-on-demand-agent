@@ -100,7 +100,6 @@ path) **and** Sentry's Application Metrics API (auto-on with the service DSN).
 | `llm.tokens_in` / `llm.tokens_out` | histogram | agent | `model`, `api`, `ticker` |
 | `llm.calls` | counter | agent | `model`, `api`, `outcome`, `ticker` |
 | `llm.empty_response` | counter | agent | `model`, `api`, `ticker` |
-| `llm.web_search.used` | counter | agent | `api`, `ticker` |
 | `agent.http.requests` | counter | agent | `host`, `status_code`, `ticker` |
 | `agent.http.duration_ms` | histogram | agent | `host`, `ticker` |
 
