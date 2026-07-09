@@ -33,3 +33,4 @@ agent/.runs/
 anthropic_models.json
 .gstack/
 .agents/
+.claude/skills
