@@ -6,6 +6,7 @@ import {
   ATTR_DEPLOYMENT_ENVIRONMENT_NAME,
 } from "@opentelemetry/semantic-conventions";
 import { getNodeAutoInstrumentations } from "@opentelemetry/auto-instrumentations-node";
+import { initMetrics } from "./metrics";
 
 let sdk: NodeSDK | undefined;
 
@@ -21,4 +22,5 @@ export function initOtel(): void {
     instrumentations: [getNodeAutoInstrumentations()],
   });
   sdk.start();
+  initMetrics();
 }

@@ -5,6 +5,10 @@ vi.mock("@/lib/runtime", () => ({
   spawnAgent: vi.fn(async (jobId: string) => `sb-${jobId.slice(0, 8)}`),
 }));
 
+vi.mock("@/lib/observability/metrics", () => ({
+  jobsSubmitted: vi.fn(),
+}));
+
 vi.mock("@/lib/db/client", () => {
   const rows: Array<{ id: string; ticker: string; status: string; sandbox_id?: string }> = [];
   const insertReturning = vi.fn(async (data: { ticker: string }) => {
@@ -49,5 +53,13 @@ describe("POST /api/jobs", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.jobId).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  it("emits jobs.submitted on accept and reject", async () => {
+    const { jobsSubmitted } = await import("@/lib/observability/metrics");
+    await POST(req({ ticker: "AAPL" }));
+    await POST(req({ ticker: "" }));
+    expect(jobsSubmitted).toHaveBeenCalledWith("accepted", "AAPL");
+    expect(jobsSubmitted).toHaveBeenCalledWith("rejected", "unknown");
   });
 });

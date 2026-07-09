@@ -41,6 +41,11 @@ def init_observability(job_id: str) -> None:
 
     trace.set_tracer_provider(provider)
 
+    # Metrics: share the same Resource; OTLP metric export is gated identically
+    # to the OTLP trace path (see lib/metrics.init_metrics).
+    from lib.metrics import init_metrics
+    init_metrics(resource)
+
     # === Sentry exporter ===
     # Sentry Python SDK v2+ integrates with OTel via SentrySpanProcessor +
     # SentryPropagator — spans created on the OTel TracerProvider are forwarded
@@ -256,6 +261,12 @@ def flush_observability(timeout_s: float = 5.0) -> None:
             tp.shutdown()
         except Exception:
             pass
+
+    try:
+        from lib.metrics import flush_metrics
+        flush_metrics(timeout_s=timeout_s)
+    except Exception:
+        pass
 
     if _sentry_inited:
         try:

@@ -121,3 +121,13 @@ def test_dd_exporter_agent_default_when_unset(monkeypatch):
     assert o._dd_inited is True
     assert o._dd_otlp_inited is False
     o.flush_observability(timeout_s=1.0)
+
+
+def test_init_sets_up_metrics(monkeypatch):
+    monkeypatch.setenv("JOB_ID", "job-metrics")
+    import importlib, lib.observability as o, lib.metrics as mtr
+    importlib.reload(mtr)
+    importlib.reload(o)
+    o.init_observability(job_id="job-metrics")
+    assert mtr._meter is not None
+    o.flush_observability(timeout_s=1.0)

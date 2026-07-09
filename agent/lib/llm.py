@@ -11,6 +11,7 @@ from opentelemetry import trace
 from .prompts import SYSTEM_PROMPT, user_prompt
 from .observability import get_host, emit_metric, emit_log
 from .finance import Snapshot, fetch_snapshot
+from . import metrics
 
 logger = logging.getLogger(__name__)
 
@@ -95,9 +96,10 @@ def _env_flag(name: str, default: bool) -> bool:
     return stripped not in ("false", "0", "no", "off")
 
 
-def _require_nonempty(text: str | None, *, api: str, finish_reason: str | None, span) -> None:
-    """Log a warning + record a span event + raise EmptyLLMResponseError if the
-    model returned no content. tenacity catches EmptyLLMResponseError and retries."""
+def _require_nonempty(text: str | None, *, api: str, finish_reason: str | None, span,
+                      model: str, ticker: str) -> None:
+    """Log a warning + record a span event + metric + raise EmptyLLMResponseError
+    if the model returned no content. tenacity catches EmptyLLMResponseError and retries."""
     if text and text.strip():
         return
     span.add_event("llm.empty_response", {
@@ -105,6 +107,7 @@ def _require_nonempty(text: str | None, *, api: str, finish_reason: str | None, 
         "finish_reason": finish_reason or "unknown",
         "text_is_none": text is None,
     })
+    metrics.record_llm_empty_response(model, api, ticker)
     logger.warning(
         "LLM returned empty response (api=%s, finish_reason=%s, text_is_none=%s); retrying",
         api, finish_reason, text is None,
@@ -119,6 +122,7 @@ class OpenAIClient:
         self._client = OpenAI(
             api_key=os.environ["OPENAI_API_KEY"],
             base_url=os.environ.get("OPENAI_API_URL") or None,
+            http_client=metrics.build_httpx_client(),
         )
         self._model = model or os.environ.get("OPENAI_MODEL") or DEFAULT_MODEL
         # Default: use OpenAI's Responses API + hosted web_search tool. Set
@@ -139,10 +143,13 @@ class OpenAIClient:
         reraise=True,
     )
     def analyze(self, ticker: str, snapshot: Snapshot | None = None) -> Analysis:
+        metrics.set_current_ticker(ticker)
         tracer = trace.get_tracer("stock-agent")
+        api = "responses" if self._use_responses_api else "chat.completions"
         with tracer.start_as_current_span("llm.analyze") as span:
             span.set_attribute("host", get_host())
             span.set_attribute("model", self._model)
+            span.set_attribute("api", api)
             messages = [
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt(ticker, snapshot=snapshot)},
