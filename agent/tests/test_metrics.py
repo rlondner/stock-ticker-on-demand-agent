@@ -92,12 +92,30 @@ def test_http_hook_records_request(monkeypatch):
 def test_metrics_otlp_reader_added_when_resolver_returns(monkeypatch):
     import importlib, lib.metrics as m
     from opentelemetry.sdk.resources import Resource
+    from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
     importlib.reload(m)
     monkeypatch.setattr(m, "resolve_otlp_target",
                         lambda signal: ("https://otlp.example/v1/metrics", {"dd-api-key": "k"}) if signal == "metrics" else None)
     m.init_metrics(Resource.create({"service.name": "test"}))
     # A periodic OTLP reader should have been constructed and attached.
     assert m._meter is not None
+    readers = list(m._meter_provider._metric_readers)
+    assert any(isinstance(r, PeriodicExportingMetricReader) for r in readers), (
+        f"Expected a PeriodicExportingMetricReader to be attached, got: {readers}"
+    )
+
+
+def test_no_otlp_reader_when_resolver_returns_none(monkeypatch):
+    import importlib, lib.metrics as m
+    from opentelemetry.sdk.resources import Resource
+    from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+    importlib.reload(m)
+    monkeypatch.setattr(m, "resolve_otlp_target", lambda signal: None)
+    m.init_metrics(Resource.create({"service.name": "test"}))
+    readers = list(m._meter_provider._metric_readers)
+    assert not any(isinstance(r, PeriodicExportingMetricReader) for r in readers), (
+        f"Expected no PeriodicExportingMetricReader when resolver returns None, got: {readers}"
+    )
 
 
 def test_record_llm_duration_histogram(monkeypatch):
