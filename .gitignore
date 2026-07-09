@@ -31,3 +31,4 @@ Thumbs.db
 agent/.runs/
 /.env
 anthropic_models.json
+.gstack/
