@@ -68,6 +68,28 @@ def test_main_idempotency_when_already_complete(neon_url, fresh_job, monkeypatch
         agent.main()
         m.assert_not_called()
 
+def test_agent_records_completion_metrics(monkeypatch):
+    monkeypatch.setenv("JOB_ID", "job-x")
+    import importlib, agent as agent_module, lib.metrics as mtr
+    importlib.reload(mtr)
+    calls = {}
+    monkeypatch.setattr(mtr, "record_job_completed",
+                        lambda final_status, ticker: calls.setdefault("completed", (final_status, ticker)))
+    monkeypatch.setattr(mtr, "record_agent_run_duration",
+                        lambda final_status, ticker, duration_ms: calls.setdefault("duration", (final_status, ticker)))
+    monkeypatch.setattr(agent_module, "get_job", lambda job_id: {"ticker": "AAPL", "status": "pending", "sandbox_id": None})
+    monkeypatch.setattr(agent_module, "mark_running", lambda job_id: None)
+    monkeypatch.setattr(agent_module, "mark_complete", lambda job_id, recommendation, result: None)
+    monkeypatch.setattr(agent_module, "run_analysis", lambda ticker: {"recommendation": "buy"})
+    monkeypatch.setattr(agent_module, "self_delete", lambda sandbox_id=None: None)
+    monkeypatch.setattr(agent_module, "init_observability", lambda **kw: None)
+    monkeypatch.setattr(agent_module, "flush_observability", lambda *a, **kw: None)
+
+    monkeypatch.setattr(agent_module, "JOB_ID", "job-x")
+    agent_module.main()
+    assert calls["completed"] == ("complete", "AAPL")
+    assert calls["duration"][0] == "complete"
+
 def test_main_writes_failed_on_llm_error(neon_url, fresh_job, monkeypatch):
     monkeypatch.setenv("JOB_ID", fresh_job)
     monkeypatch.setenv("NEON_DATABASE_URL", neon_url)

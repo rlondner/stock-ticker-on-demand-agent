@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { db, jobs } from "@/lib/db/client";
 import { spawnAgent } from "@/lib/runtime";
 import { traced, addAttrs, recordError } from "@/lib/observability/api";
+import { jobsSubmitted } from "@/lib/observability/metrics";
 
 const Body = z.object({
   ticker: z.string().regex(/^[A-Z]{1,5}$/, "ticker must be 1-5 uppercase letters"),
@@ -15,6 +16,7 @@ export async function POST(req: Request): Promise<Response> {
       parsed = Body.parse(await req.json());
     } catch (e) {
       addAttrs(span, { outcome: "rejected" });
+      jobsSubmitted("rejected", "unknown");
       const msg = e instanceof z.ZodError ? e.issues[0]?.message ?? "invalid" : "invalid";
       return Response.json({ error: msg }, { status: 400 });
     }
@@ -29,6 +31,7 @@ export async function POST(req: Request): Promise<Response> {
       const sandboxId = await spawnAgent(jobId, span);
       await db.update(jobs).set({ sandboxId }).where(eq(jobs.id, jobId));
       addAttrs(span, { sandbox_id: sandboxId, outcome: "accepted" });
+      jobsSubmitted("accepted", parsed.ticker);
       return Response.json({ jobId });
     } catch (e) {
       recordError(span, e);

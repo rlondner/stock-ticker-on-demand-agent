@@ -8,6 +8,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 from openai import OpenAI, APIError, RateLimitError, APIConnectionError, InternalServerError
 from opentelemetry import trace
 from .prompts import SYSTEM_PROMPT, user_prompt
+from . import metrics
 
 logger = logging.getLogger(__name__)
 
@@ -61,9 +62,10 @@ def _env_flag(name: str, default: bool) -> bool:
     return stripped not in ("false", "0", "no", "off")
 
 
-def _require_nonempty(text: str | None, *, api: str, finish_reason: str | None, span) -> None:
-    """Log a warning + record a span event + raise EmptyLLMResponseError if the
-    model returned no content. tenacity catches EmptyLLMResponseError and retries."""
+def _require_nonempty(text: str | None, *, api: str, finish_reason: str | None, span,
+                      model: str, ticker: str) -> None:
+    """Log a warning + record a span event + metric + raise EmptyLLMResponseError
+    if the model returned no content. tenacity catches EmptyLLMResponseError and retries."""
     if text and text.strip():
         return
     span.add_event("llm.empty_response", {
@@ -71,6 +73,7 @@ def _require_nonempty(text: str | None, *, api: str, finish_reason: str | None, 
         "finish_reason": finish_reason or "unknown",
         "text_is_none": text is None,
     })
+    metrics.record_llm_empty_response(model, api, ticker)
     logger.warning(
         "LLM returned empty response (api=%s, finish_reason=%s, text_is_none=%s); retrying",
         api, finish_reason, text is None,
@@ -85,6 +88,7 @@ class OpenAIClient:
         self._client = OpenAI(
             api_key=os.environ["OPENAI_API_KEY"],
             base_url=os.environ.get("OPENAI_API_URL") or None,
+            http_client=metrics.build_httpx_client(),
         )
         self._model = model or os.environ.get("OPENAI_MODEL") or DEFAULT_MODEL
         # Default: use OpenAI's Responses API + hosted web_search tool. Set
@@ -105,42 +109,53 @@ class OpenAIClient:
         reraise=True,
     )
     def analyze(self, ticker: str) -> Analysis:
+        metrics.set_current_ticker(ticker)
         tracer = trace.get_tracer("stock-agent")
+        api = "responses" if self._use_responses_api else "chat.completions"
         with tracer.start_as_current_span("llm.analyze") as span:
             span.set_attribute("model", self._model)
+            span.set_attribute("api", api)
             messages = [
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt(ticker)},
             ]
-            if self._use_responses_api:
-                span.set_attribute("api", "responses")
-                resp = self._client.responses.create(
-                    model=self._model,
-                    input=messages,
-                    tools=[{"type": "web_search"}],
-                )
-                text = resp.output_text
-                finish_reason = getattr(resp, "status", None)
-                usage = getattr(resp, "usage", None)
-                if usage:
-                    span.set_attribute("tokens_in", getattr(usage, "input_tokens", 0))
-                    span.set_attribute("tokens_out", getattr(usage, "output_tokens", 0))
-                _require_nonempty(text, api="responses", finish_reason=finish_reason, span=span)
-            else:
-                span.set_attribute("api", "chat.completions")
-                resp = self._client.chat.completions.create(
-                    model=self._model,
-                    messages=messages,
-                )
-                choice = resp.choices[0]
-                text = choice.message.content
-                finish_reason = choice.finish_reason
-                usage = getattr(resp, "usage", None)
-                if usage:
-                    span.set_attribute("tokens_in", getattr(usage, "prompt_tokens", 0))
-                    span.set_attribute("tokens_out", getattr(usage, "completion_tokens", 0))
-                _require_nonempty(text, api="chat.completions", finish_reason=finish_reason, span=span)
-            return parse_response(text)
+            try:
+                if self._use_responses_api:
+                    resp = self._client.responses.create(
+                        model=self._model,
+                        input=messages,
+                        tools=[{"type": "web_search"}],
+                    )
+                    text = resp.output_text
+                    finish_reason = getattr(resp, "status", None)
+                    usage = getattr(resp, "usage", None)
+                    tin = getattr(usage, "input_tokens", 0) if usage else 0
+                    tout = getattr(usage, "output_tokens", 0) if usage else 0
+                else:
+                    resp = self._client.chat.completions.create(
+                        model=self._model,
+                        messages=messages,
+                    )
+                    choice = resp.choices[0]
+                    text = choice.message.content
+                    finish_reason = choice.finish_reason
+                    usage = getattr(resp, "usage", None)
+                    tin = getattr(usage, "prompt_tokens", 0) if usage else 0
+                    tout = getattr(usage, "completion_tokens", 0) if usage else 0
+
+                span.set_attribute("tokens_in", tin)
+                span.set_attribute("tokens_out", tout)
+                metrics.record_llm_tokens(self._model, api, tin, tout, ticker)
+                _require_nonempty(text, api=api, finish_reason=finish_reason, span=span,
+                                  model=self._model, ticker=ticker)
+                result = parse_response(text)
+                if self._use_responses_api:
+                    metrics.record_llm_web_search(api, ticker)
+                metrics.record_llm_call(self._model, api, "ok", ticker)
+                return result
+            except Exception:
+                metrics.record_llm_call(self._model, api, "error", ticker)
+                raise
 
 def run_analysis(ticker: str) -> dict:
     client: LLMClient = OpenAIClient()
