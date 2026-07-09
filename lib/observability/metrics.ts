@@ -20,28 +20,32 @@ export function buildJobAttrs(outcome: string, ticker: string): Record<string, s
 
 export function initMetrics(opts?: { readers?: MetricReader[] }): void {
   if (provider) return;
-  const readers: MetricReader[] = [...(opts?.readers ?? [])];
+  try {
+    const readers: MetricReader[] = [...(opts?.readers ?? [])];
 
-  const ddKey = process.env.DD_API_KEY;
-  const ddDisabled = (process.env.DD_TRACE_ENABLED ?? "").trim().toLowerCase() === "false";
-  const ddExporter = (process.env.DD_EXPORTER ?? "agent").trim().toLowerCase();
-  const otlpEndpoint = process.env.DD_OTLP_ENDPOINT;
-  if (ddKey && !ddDisabled && ddExporter === "otlp" && otlpEndpoint) {
-    // Lazy require keeps the OTLP exporter out of edge/browser bundles.
-    const { OTLPMetricExporter } = require("@opentelemetry/exporter-metrics-otlp-http");
-    readers.push(new PeriodicExportingMetricReader({
-      exporter: new OTLPMetricExporter({
-        url: metricsEndpoint(otlpEndpoint),
-        headers: { "DD-API-KEY": ddKey },
-      }),
-    }));
+    const ddKey = process.env.DD_API_KEY;
+    const ddDisabled = (process.env.DD_TRACE_ENABLED ?? "").trim().toLowerCase() === "false";
+    const ddExporter = (process.env.DD_EXPORTER ?? "agent").trim().toLowerCase();
+    const otlpEndpoint = process.env.DD_OTLP_ENDPOINT;
+    if (ddKey && !ddDisabled && ddExporter === "otlp" && otlpEndpoint) {
+      // Lazy require keeps the OTLP exporter out of edge/browser bundles.
+      const { OTLPMetricExporter } = require("@opentelemetry/exporter-metrics-otlp-http");
+      readers.push(new PeriodicExportingMetricReader({
+        exporter: new OTLPMetricExporter({
+          url: metricsEndpoint(otlpEndpoint),
+          headers: { "DD-API-KEY": ddKey },
+        }),
+      }));
+    }
+
+    provider = new MeterProvider({ readers });
+    otelMetrics.setGlobalMeterProvider(provider);
+    const meter = provider.getMeter("stock-agent-frontend");
+    jobsSubmittedCounter = meter.createCounter("jobs.submitted");
+    sentryEnabled = !!process.env.SENTRY_DSN_NEXTJS;
+  } catch {
+    /* metrics init must never throw to caller */
   }
-
-  provider = new MeterProvider({ readers });
-  otelMetrics.setGlobalMeterProvider(provider);
-  const meter = provider.getMeter("stock-agent-frontend");
-  jobsSubmittedCounter = meter.createCounter("jobs.submitted");
-  sentryEnabled = !!process.env.SENTRY_DSN_NEXTJS;
 }
 
 function sentryIncr(key: string, value: number, tags: Record<string, string>): void {
