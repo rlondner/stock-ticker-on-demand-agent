@@ -92,6 +92,10 @@ def init_observability(job_id: str) -> None:
         global _dd_inited
         _dd_inited = True
     else:
+        # Intentional OTLP-default path: covers both dd_exporter=="otlp" and the
+        # degenerate agent-mode case (missing DD_API_KEY or DD_TRACE_ENABLED=false).
+        # resolve_otlp_target returns None when unconfigured → no exporter installed,
+        # but _install_trace_instrumentors() still runs harmlessly.
         _trace_target = resolve_otlp_target("traces")
         if _trace_target is not None:
             endpoint, headers = _trace_target

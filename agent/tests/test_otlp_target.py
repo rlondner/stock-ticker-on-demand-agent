@@ -1,4 +1,3 @@
-import pytest
 from lib.otlp_target import parse_otlp_headers, resolve_otlp_target
 
 _ALL = ("traces", "metrics", "logs")
@@ -77,3 +76,12 @@ def test_datadog_disabled_flag_suppresses_convenience(monkeypatch):
     monkeypatch.setenv("DD_API_KEY", "dd-key")
     monkeypatch.setenv("DD_TRACE_ENABLED", "false")
     assert resolve_otlp_target("metrics") is None
+
+
+def test_base_endpoint_beats_datadog_convenience(monkeypatch):
+    _clear(monkeypatch)
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "https://collector.example/otlp")
+    monkeypatch.setenv("DD_API_KEY", "dd-key")
+    ep, headers = resolve_otlp_target("traces")
+    assert ep == "https://collector.example/otlp/v1/traces"
+    assert "dd-api-key" not in headers
