@@ -121,7 +121,6 @@ class OpenAIClient:
             ]
             try:
                 if self._use_responses_api:
-                    metrics.record_llm_web_search(api, ticker)
                     resp = self._client.responses.create(
                         model=self._model,
                         input=messages,
@@ -150,6 +149,8 @@ class OpenAIClient:
                 _require_nonempty(text, api=api, finish_reason=finish_reason, span=span,
                                   model=self._model, ticker=ticker)
                 result = parse_response(text)
+                if self._use_responses_api:
+                    metrics.record_llm_web_search(api, ticker)
                 metrics.record_llm_call(self._model, api, "ok", ticker)
                 return result
             except Exception:

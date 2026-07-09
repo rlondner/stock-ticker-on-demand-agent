@@ -53,7 +53,7 @@ function sentryIncr(key: string, value: number, tags: Record<string, string>): v
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const Sentry = require("@sentry/nextjs");
-    Sentry?.metrics?.increment?.(key, value, { tags });
+    Sentry?.metrics?.count?.(key, value, { attributes: tags });
   } catch {
     /* metrics must never break a request */
   }

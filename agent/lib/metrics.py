@@ -91,8 +91,8 @@ def _sentry_incr(key, value, tags):
     try:
         import sentry_sdk
         m = getattr(sentry_sdk, "metrics", None)
-        if m and hasattr(m, "incr"):
-            m.incr(key, value, tags=tags)
+        if m and hasattr(m, "count"):
+            m.count(key, value, attributes=tags)
     except Exception:
         pass
 
@@ -104,7 +104,7 @@ def _sentry_dist(key, value, tags):
         import sentry_sdk
         m = getattr(sentry_sdk, "metrics", None)
         if m and hasattr(m, "distribution"):
-            m.distribution(key, value, tags=tags)
+            m.distribution(key, value, attributes=tags)
     except Exception:
         pass
 

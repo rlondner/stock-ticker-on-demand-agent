@@ -39,7 +39,7 @@ single distributed trace spans **frontend → agent**.
 - `opentelemetry-instrumentation-openai>=0.30.0`
 - `opentelemetry-instrumentation-logging>=0.48b0`
 - `opentelemetry-exporter-otlp-proto-http>=1.27.0`
-- `sentry-sdk[opentelemetry]>=2.15.0`
+- `sentry-sdk[opentelemetry]>=2.44.0`
 - `ddtrace>=2.13.0`
 
 ## Traces
