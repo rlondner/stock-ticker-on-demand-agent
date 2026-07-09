@@ -336,3 +336,37 @@ def test_empty_response_emits_record_llm_empty_response(monkeypatch):
         llm._require_nonempty("", api="chat.completions", finish_reason="stop",
                               span=span, model="gpt-4.1-mini", ticker="NVDA")
     assert seen["empty"] == [("gpt-4.1-mini", "chat.completions", "NVDA")]
+
+
+def test_analyze_records_llm_duration(monkeypatch):
+    import importlib, lib.metrics as mtr, lib.llm as llm
+    importlib.reload(mtr)
+    seen = []
+    monkeypatch.setattr(mtr, "record_llm_tokens", lambda *a, **kw: None)
+    monkeypatch.setattr(mtr, "record_llm_call", lambda *a, **kw: None)
+    monkeypatch.setattr(mtr, "record_llm_duration",
+                        lambda model, api, duration_ms, ticker: seen.append((model, api, ticker)))
+    importlib.reload(llm)
+
+    valid = '{"recommendation":"buy","summary":"s","signals":[]}'
+
+    class FakeResponses:
+        def create(self, **kw):
+            class R:
+                output_text = valid
+                status = "completed"
+                class usage:  # noqa: N801
+                    input_tokens = 10
+                    output_tokens = 5
+            return R()
+
+    class FakeClient:
+        responses = FakeResponses()
+
+    client = llm.OpenAIClient.__new__(llm.OpenAIClient)
+    client._client = FakeClient()
+    client._model = "gpt-4.1-mini"
+    client._use_responses_api = True
+
+    client.analyze("AAPL")
+    assert seen == [("gpt-4.1-mini", "responses", "AAPL")]

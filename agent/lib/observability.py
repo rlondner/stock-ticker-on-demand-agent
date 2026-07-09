@@ -175,37 +175,6 @@ def _datadog_log(level: str, message: str, attributes: dict) -> None:
         pass
 
 
-def _datadog_metric(name: str, value: float, tags: list[str] | None = None) -> None:
-    """Fire-and-forget POST to Datadog's HTTP metrics intake as a gauge point.
-    Uses the modern v2/series shape (type 3 = gauge)."""
-    if not _dd_enabled():
-        return
-    try:
-        import time as _time
-        import httpx
-        merged_tags = _dd_common_tags() + (tags or [])
-        payload = {
-            "series": [{
-                "metric": name,
-                "type": 3,
-                "points": [{"timestamp": int(_time.time()), "value": float(value)}],
-                "tags": merged_tags,
-                "resources": [{"type": "host", "name": get_host()}],
-            }],
-        }
-        httpx.post(
-            f"https://api.{_dd_site()}/api/v2/series",
-            headers={
-                "DD-API-KEY": os.environ["DD_API_KEY"],
-                "Content-Type": "application/json",
-            },
-            json=payload,
-            timeout=3,
-        )
-    except Exception:
-        pass
-
-
 def emit_log(level: str, message: str, **attributes) -> None:
     """Emit a structured log to stdlib (always), Sentry Logs (when
     SENTRY_DSN_AGENT is set), and Datadog HTTP log intake (when DD_API_KEY
@@ -234,20 +203,6 @@ def emit_log(level: str, message: str, **attributes) -> None:
             pass
 
     _datadog_log(level, message, attributes)
-
-
-def emit_metric(name: str, value: float, **tags) -> None:
-    """Emit a numeric metric to Datadog (via HTTP intake) AND to the current
-    OTel span as an attribute (Sentry surfaces span attributes in Trace
-    Explorer; Sentry sunset its custom-metrics product in Oct 2024, so span
-    attributes are the endorsed replacement).
-
-    tags: keyword args become 'key:value' Datadog tags."""
-    span = trace.get_current_span()
-    if span and span.is_recording():
-        span.set_attribute(name, value)
-
-    _datadog_metric(name, value, tags=[f"{k}:{v}" for k, v in tags.items()])
 
 
 # Backward-compat alias for existing callers.
