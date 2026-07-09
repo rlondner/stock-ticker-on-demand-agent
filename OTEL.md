@@ -16,7 +16,7 @@ single distributed trace spans **frontend → agent**.
 |----------|---------------------|---------------------|--------------------------------------------------|
 | Traces   | ✅ Fully tracked    | Sentry + Datadog    | 5 manual spans + broad auto-instrumentation      |
 | Logs     | ⚠️ Minimal          | Sentry + Datadog    | Correlated to traces, not a dedicated log pipeline |
-| Metrics  | ❌ Not implemented  | —                   | OTel metrics SDK is not even a dependency        |
+| Metrics  | ✅ Implemented      | Sentry + Datadog    | Dual-emit facade (OTLP + Sentry Application Metrics) |
 
 ## Dependencies
 
@@ -87,9 +87,24 @@ trace context / breadcrumbs rather than being shipped as a first-class log strea
 
 ## Metrics
 
-**Not implemented.** No counters, histograms, or gauges are defined in either
-service, and the OTel metrics SDK is not a dependency in `package.json` or
-`agent/requirements.txt`.
+Custom metrics are dual-emitted through a facade in each service: OTel `Meter`
+instruments exported via a periodic OTLP-HTTP reader (gated like the OTLP trace
+path) **and** Sentry's Application Metrics API (auto-on with the service DSN).
+`job_id` is never a metric tag; `ticker` is tagged on all metrics.
+
+| Metric | Type | Service | Tags |
+|---|---|---|---|
+| `jobs.submitted` | counter | Next.js | `outcome`, `ticker` |
+| `jobs.completed` | counter | agent | `final_status`, `ticker` |
+| `agent.run.duration_ms` | histogram | agent | `final_status`, `ticker` |
+| `llm.tokens_in` / `llm.tokens_out` | histogram | agent | `model`, `api`, `ticker` |
+| `llm.calls` | counter | agent | `model`, `api`, `outcome`, `ticker` |
+| `llm.empty_response` | counter | agent | `model`, `api`, `ticker` |
+| `llm.web_search.used` | counter | agent | `api`, `ticker` |
+| `agent.http.requests` | counter | agent | `host`, `status_code`, `ticker` |
+| `agent.http.duration_ms` | histogram | agent | `host`, `ticker` |
+
+Facade modules: `lib/observability/metrics.ts` (Next.js), `agent/lib/metrics.py` (agent).
 
 ## Backends & configuration
 
