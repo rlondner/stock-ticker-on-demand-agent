@@ -82,8 +82,10 @@ def test_agent_records_completion_metrics(monkeypatch):
     monkeypatch.setattr(agent_module, "mark_complete", lambda job_id, recommendation, result: None)
     monkeypatch.setattr(agent_module, "run_analysis", lambda ticker: {"recommendation": "buy"})
     monkeypatch.setattr(agent_module, "self_delete", lambda sandbox_id=None: None)
+    monkeypatch.setattr(agent_module, "init_observability", lambda **kw: None)
+    monkeypatch.setattr(agent_module, "flush_observability", lambda *a, **kw: None)
 
-    agent_module.JOB_ID = "job-x"
+    monkeypatch.setattr(agent_module, "JOB_ID", "job-x")
     agent_module.main()
     assert calls["completed"] == ("complete", "AAPL")
     assert calls["duration"][0] == "complete"
