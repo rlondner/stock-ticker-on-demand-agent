@@ -6,6 +6,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.trace.status import Status, StatusCode
+from .otlp_target import resolve_otlp_target
 
 _stdlib_logger = logging.getLogger("stock-agent")
 
@@ -13,6 +14,7 @@ _initialized = False
 _sentry_inited = False
 _dd_inited = False
 _dd_otlp_inited = False
+_logger_provider = None
 
 
 def get_host() -> str:
@@ -109,6 +111,20 @@ def init_observability(job_id: str) -> None:
             global _dd_otlp_inited
             _dd_otlp_inited = True
 
+    # Logs: OTel LoggerProvider bridged from stdlib; OTLP export via resolver.
+    from opentelemetry.sdk._logs import LoggerProvider
+    from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
+    global _logger_provider
+    _logger_provider = LoggerProvider(resource=resource)
+    _log_target = resolve_otlp_target("logs")
+    if _log_target is not None:
+        endpoint, headers = _log_target
+        from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
+        _logger_provider.add_log_record_processor(BatchLogRecordProcessor(
+            OTLPLogExporter(endpoint=endpoint, headers=headers),
+        ))
+    _install_log_bridge(_logger_provider)
+
     # Continue the W3C trace from the parent (NextJS) if TRACEPARENT was passed.
     traceparent = os.environ.get("TRACEPARENT")
     if traceparent:
@@ -146,33 +162,16 @@ def _dd_common_tags() -> list[str]:
     return tags
 
 
-def _datadog_log(level: str, message: str, attributes: dict) -> None:
-    """Fire-and-forget POST to Datadog's HTTP log intake. Tiny timeout — this
-    is a demo agent that self-deletes; we don't queue or retry."""
-    if not _dd_enabled():
-        return
-    try:
-        import httpx
-        payload = {
-            "ddsource": "python",
-            "service": os.environ.get("DD_SERVICE", "stock-agent"),
-            "hostname": get_host(),
-            "status": level,
-            "message": message,
-            "ddtags": ",".join(_dd_common_tags()),
-            **attributes,
-        }
-        httpx.post(
-            f"https://http-intake.logs.{_dd_site()}/api/v2/logs",
-            headers={
-                "DD-API-KEY": os.environ["DD_API_KEY"],
-                "Content-Type": "application/json",
-            },
-            json=[payload],
-            timeout=3,
-        )
-    except Exception:
-        pass
+def _install_log_bridge(logger_provider) -> None:
+    """Route stdlib logs emitted through `_stdlib_logger` into an OTel
+    LoggerProvider so they reach the OTLP log exporter. Idempotent."""
+    from opentelemetry.sdk._logs import LoggingHandler
+    for h in list(_stdlib_logger.handlers):
+        if isinstance(h, LoggingHandler):
+            return
+    handler = LoggingHandler(level=logging.DEBUG, logger_provider=logger_provider)
+    _stdlib_logger.addHandler(handler)
+    _stdlib_logger.setLevel(logging.DEBUG)
 
 
 def emit_log(level: str, message: str, **attributes) -> None:
@@ -202,8 +201,6 @@ def emit_log(level: str, message: str, **attributes) -> None:
         except Exception:
             pass
 
-    _datadog_log(level, message, attributes)
-
 
 # Backward-compat alias for existing callers.
 sentry_log = emit_log
@@ -222,6 +219,12 @@ def flush_observability(timeout_s: float = 5.0) -> None:
         flush_metrics(timeout_s=timeout_s)
     except Exception:
         pass
+
+    if _logger_provider is not None:
+        try:
+            _logger_provider.force_flush(timeout_millis=int(timeout_s * 1000))
+        except Exception:
+            pass
 
     if _sentry_inited:
         try:

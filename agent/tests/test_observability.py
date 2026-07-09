@@ -131,3 +131,30 @@ def test_init_sets_up_metrics(monkeypatch):
     o.init_observability(job_id="job-metrics")
     assert mtr._meter is not None
     o.flush_observability(timeout_s=1.0)
+
+
+def test_emit_log_bridges_to_otel_logs(monkeypatch):
+    monkeypatch.setenv("JOB_ID", "job-logs")
+    import importlib, lib.observability as o
+    importlib.reload(o)
+    from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
+    from opentelemetry.sdk._logs.export import InMemoryLogExporter, SimpleLogRecordProcessor
+
+    # Prior tests may leave a LoggingHandler on the shared stdlib logger (it is a
+    # module-level singleton that survives importlib.reload). Remove any stale OTel
+    # handlers so _install_log_bridge's idempotency guard does not short-circuit.
+    for h in list(o._stdlib_logger.handlers):
+        if isinstance(h, LoggingHandler):
+            o._stdlib_logger.removeHandler(h)
+
+    exporter = InMemoryLogExporter()
+    lp = LoggerProvider()
+    lp.add_log_record_processor(SimpleLogRecordProcessor(exporter))
+    o._install_log_bridge(lp)  # attach a stdlib->OTel handler
+
+    o.emit_log("warn", "snapshot.missing", ticker="AAPL")
+    lp.force_flush()
+    # Installed SDK uses get_finished_logs() (brief named get_finished_log_records,
+    # but this SDK version exposes get_finished_logs instead).
+    records = exporter.get_finished_logs()
+    assert any("snapshot.missing" in (r.log_record.body or "") for r in records)
