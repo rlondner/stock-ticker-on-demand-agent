@@ -26,7 +26,6 @@ const CONSENSUS_LABELS: Record<string, string> = {
   buy: "Buy",
   outperform: "Outperform",
   hold: "Hold",
-  neutral: "Hold",
   underperform: "Underperform",
   sell: "Sell",
   strong_sell: "Strong Sell",

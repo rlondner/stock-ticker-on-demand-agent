@@ -39,6 +39,10 @@ describe("formatConsensus", () => {
     expect(formatConsensus("underperform")).toBe("Underperform");
     expect(formatConsensus(null)).toBeNull();
   });
+
+  it("formats neutral as Neutral", () => {
+    expect(formatConsensus("neutral")).toBe("Neutral");
+  });
 });
 
 describe("analystPanelModel", () => {
