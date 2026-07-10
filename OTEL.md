@@ -104,6 +104,11 @@ DSN). `job_id` is never a metric tag; `ticker` is tagged on all metrics.
 | `llm.empty_response` | counter | agent | `model`, `api`, `ticker` |
 | `agent.http.requests` | counter | agent | `host`, `status_code`, `ticker` |
 | `agent.http.duration_ms` | histogram | agent | `host`, `ticker` |
+| `agent.snapshot.fetch` | counter | agent | `outcome`, `ticker` |
+| `agent.snapshot.fetch.duration_ms` | histogram | agent | `outcome`, `ticker` |
+| `agent.snapshot.backfilled` | counter | agent | `ticker` |
+| `agent.snapshot.field_missing` | counter | agent | `field`, `ticker` |
+| `agent.snapshot.completeness` | histogram | agent | `ticker` |
 
 Facade modules: `lib/observability/metrics.ts` (Next.js), `agent/lib/metrics.py` (agent).
 
