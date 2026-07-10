@@ -1,4 +1,4 @@
-from lib.finance import Snapshot
+from lib.finance import AnalystDistribution, Snapshot
 from lib.prompts import SYSTEM_PROMPT, user_prompt
 
 
@@ -68,6 +68,22 @@ def test_user_prompt_ends_with_json_only_instruction():
     p_without = user_prompt("MDB", snapshot=None)
     assert p_with.strip().endswith("Output JSON only.")
     assert p_without.strip().endswith("Output JSON only.")
+
+
+def test_user_prompt_includes_analyst_ratings_when_distribution_present():
+    dist = AnalystDistribution(strong_buy=12, buy=8, hold=5, sell=1, strong_sell=0)
+    p = user_prompt("MDB", snapshot=_snap(analyst_distribution=dist))
+    assert "Analyst ratings:" in p
+    assert "12 strong buy" in p
+    assert "8 buy" in p
+    assert "5 hold" in p
+    assert "1 sell" in p
+    assert "0 strong sell" in p
+
+
+def test_user_prompt_omits_analyst_ratings_when_no_distribution():
+    p = user_prompt("MDB", snapshot=_snap(analyst_distribution=None))
+    assert "Analyst ratings:" not in p
 
 
 def test_user_prompt_skips_none_fields():
