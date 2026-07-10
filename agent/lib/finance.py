@@ -132,6 +132,9 @@ def fetch_snapshot(ticker: str) -> Snapshot | None:
     try:
         snap, backfilled = _fetch_snapshot_once(ticker)
     except Exception as exc:
+        # Snapshot duration before the span/log work, so all three outcomes
+        # measure the same window (apples-to-apples latency histogram).
+        duration_ms = (time.monotonic() - start) * 1000
         _annotate_span_failure(span, ticker)
         emit_log(
             "warn",
@@ -140,7 +143,7 @@ def fetch_snapshot(ticker: str) -> Snapshot | None:
             reason="exception",
             exception_type=type(exc).__name__,
         )
-        metrics.record_snapshot_fetch("error", ticker, (time.monotonic() - start) * 1000)
+        metrics.record_snapshot_fetch("error", ticker, duration_ms)
         return None
     duration_ms = (time.monotonic() - start) * 1000
     if snap is None:
