@@ -19,6 +19,13 @@ export type Snapshot = {
   analyst_recommendation: string | null;
   analyst_opinion_count: number | null;
   business_summary: string | null;
+  analyst_distribution: {
+    strong_buy: number;
+    buy: number;
+    hold: number;
+    sell: number;
+    strong_sell: number;
+  } | null;
   currency: string;
   as_of: string;
 };
