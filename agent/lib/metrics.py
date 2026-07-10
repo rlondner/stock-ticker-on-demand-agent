@@ -56,6 +56,11 @@ def init_metrics(resource, extra_readers=None) -> None:
         "llm_duration_ms": _meter.create_histogram("llm.duration_ms", unit="ms"),
         "http_requests": _meter.create_counter("agent.http.requests"),
         "http_duration_ms": _meter.create_histogram("agent.http.duration_ms", unit="ms"),
+        "snapshot_fetch": _meter.create_counter("agent.snapshot.fetch"),
+        "snapshot_fetch_duration_ms": _meter.create_histogram("agent.snapshot.fetch.duration_ms", unit="ms"),
+        "snapshot_backfilled": _meter.create_counter("agent.snapshot.backfilled"),
+        "snapshot_field_missing": _meter.create_counter("agent.snapshot.field_missing"),
+        "snapshot_completeness": _meter.create_histogram("agent.snapshot.completeness"),
     }
 
     _sentry_metrics_enabled = bool(os.environ.get("SENTRY_DSN_AGENT"))
@@ -167,6 +172,32 @@ def record_http_request(host: str, status_code: int, duration_ms: float, ticker:
     _hist("http_duration_ms", duration_ms, dur_attrs)
     _sentry_incr("agent.http.requests", 1, count_attrs)
     _sentry_dist("agent.http.duration_ms", duration_ms, dur_attrs)
+
+
+def record_snapshot_fetch(outcome: str, ticker: str, duration_ms: float) -> None:
+    attrs = {"outcome": outcome, "ticker": ticker}
+    _add("snapshot_fetch", 1, attrs)
+    _hist("snapshot_fetch_duration_ms", duration_ms, attrs)
+    _sentry_incr("agent.snapshot.fetch", 1, attrs)
+    _sentry_dist("agent.snapshot.fetch.duration_ms", duration_ms, attrs)
+
+
+def record_snapshot_backfilled(ticker: str) -> None:
+    attrs = {"ticker": ticker}
+    _add("snapshot_backfilled", 1, attrs)
+    _sentry_incr("agent.snapshot.backfilled", 1, attrs)
+
+
+def record_snapshot_field_missing(field: str, ticker: str) -> None:
+    attrs = {"field": field, "ticker": ticker}
+    _add("snapshot_field_missing", 1, attrs)
+    _sentry_incr("agent.snapshot.field_missing", 1, attrs)
+
+
+def record_snapshot_completeness(populated: int, ticker: str) -> None:
+    attrs = {"ticker": ticker}
+    _hist("snapshot_completeness", populated, attrs)
+    _sentry_dist("agent.snapshot.completeness", populated, attrs)
 
 
 # --- httpx event hooks + instrumented client factory ---

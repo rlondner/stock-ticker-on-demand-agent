@@ -137,6 +137,67 @@ def test_record_llm_duration_histogram(monkeypatch):
     assert "job_id" not in points[0].attributes
 
 
+def _snapshot_points(reader, name):
+    out = []
+    for rm in reader.get_metrics_data().resource_metrics:
+        for sm in rm.scope_metrics:
+            for metric in sm.metrics:
+                if metric.name == name:
+                    out.extend(metric.data.data_points)
+    return out
+
+
+def test_record_snapshot_fetch_emits_counter_and_duration():
+    import importlib, lib.metrics as m
+    from opentelemetry.sdk.resources import Resource
+    from opentelemetry.sdk.metrics.export import InMemoryMetricReader
+    importlib.reload(m)
+    reader = InMemoryMetricReader()
+    m.init_metrics(Resource.create({"service.name": "test"}), extra_readers=[reader])
+    m.record_snapshot_fetch("success", "AAPL", 250.0)
+    c = _snapshot_points(reader, "agent.snapshot.fetch")
+    d = _snapshot_points(reader, "agent.snapshot.fetch.duration_ms")
+    assert c[0].value == 1
+    assert c[0].attributes == {"outcome": "success", "ticker": "AAPL"}
+    assert d[0].sum == 250.0
+    assert d[0].attributes == {"outcome": "success", "ticker": "AAPL"}
+
+
+def test_record_snapshot_backfilled_field_missing_completeness():
+    import importlib, lib.metrics as m
+    from opentelemetry.sdk.resources import Resource
+    from opentelemetry.sdk.metrics.export import InMemoryMetricReader
+    importlib.reload(m)
+    reader = InMemoryMetricReader()
+    m.init_metrics(Resource.create({"service.name": "test"}), extra_readers=[reader])
+    m.record_snapshot_backfilled("AAPL")
+    m.record_snapshot_field_missing("market_cap", "AAPL")
+    m.record_snapshot_completeness(11, "AAPL")
+    assert _snapshot_points(reader, "agent.snapshot.backfilled")[0].attributes == {"ticker": "AAPL"}
+    fm = _snapshot_points(reader, "agent.snapshot.field_missing")[0]
+    assert fm.value == 1 and fm.attributes == {"field": "market_cap", "ticker": "AAPL"}
+    comp = _snapshot_points(reader, "agent.snapshot.completeness")[0]
+    assert comp.sum == 11 and comp.attributes == {"ticker": "AAPL"}
+
+
+def test_snapshot_metrics_never_carry_job_id():
+    import importlib, lib.metrics as m
+    from opentelemetry.sdk.resources import Resource
+    from opentelemetry.sdk.metrics.export import InMemoryMetricReader
+    importlib.reload(m)
+    reader = InMemoryMetricReader()
+    m.init_metrics(Resource.create({"service.name": "test"}), extra_readers=[reader])
+    m.record_snapshot_fetch("success", "AAPL", 1.0)
+    m.record_snapshot_backfilled("AAPL")
+    m.record_snapshot_field_missing("close", "AAPL")
+    m.record_snapshot_completeness(5, "AAPL")
+    for rm in reader.get_metrics_data().resource_metrics:
+        for sm in rm.scope_metrics:
+            for metric in sm.metrics:
+                for pt in metric.data.data_points:
+                    assert "job_id" not in pt.attributes, metric.name
+
+
 def test_sentry_mirror_calls_count_with_attributes(monkeypatch):
     """Sentry mirror uses count(..., attributes=) — not incr/tags — and never passes job_id."""
     import importlib, lib.metrics as m
