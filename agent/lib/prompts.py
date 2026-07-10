@@ -53,6 +53,12 @@ def _format_facts(snapshot: Snapshot) -> str:
         n = snapshot.analyst_opinion_count
         n_bit = f" ({n} analysts)" if n else ""
         lines.append(f"- Analyst consensus: {snapshot.analyst_recommendation}{n_bit}")
+    if snapshot.analyst_distribution:
+        d = snapshot.analyst_distribution
+        lines.append(
+            f"- Analyst ratings: {d.strong_buy} strong buy, {d.buy} buy, "
+            f"{d.hold} hold, {d.sell} sell, {d.strong_sell} strong sell"
+        )
     if snapshot.business_summary:
         summary = snapshot.business_summary[:_BUSINESS_SUMMARY_MAX]
         if len(snapshot.business_summary) > _BUSINESS_SUMMARY_MAX:
