@@ -334,7 +334,7 @@ def test_fetch_snapshot_emits_field_missing_and_completeness_for_partial(monkeyp
         yf.Ticker.return_value = fake_ticker
         finance.fetch_snapshot("SOMECO")
     assert calls["fetch"] == [("success", "SOMECO")]
-    # Only company_name + sector populated → 10 missing, completeness 2.
+    # Only company_name + sector populated (of 13 key fields) → 11 missing, completeness 2.
     assert set(calls["field_missing"]) == {
         "industry", "close", "previous_close", "market_cap",
         "fifty_two_week_high", "fifty_two_week_low", "average_volume",
