@@ -1,5 +1,59 @@
 from lib.finance import Snapshot
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, PropertyMock
+
+
+def _fake_recs(records):
+    m = MagicMock()
+    m.to_dict.return_value = records
+    return m
+
+
+def test_fetch_recommendation_distribution_reads_0m_row():
+    from lib import finance
+    recs = _fake_recs([
+        {"period": "0m", "strongBuy": 12, "buy": 8, "hold": 5, "sell": 1, "strongSell": 0},
+        {"period": "-1m", "strongBuy": 10, "buy": 9, "hold": 6, "sell": 2, "strongSell": 1},
+    ])
+    t = MagicMock()
+    t.recommendations = recs
+    d = finance._fetch_recommendation_distribution(t)
+    assert (d.strong_buy, d.buy, d.hold, d.sell, d.strong_sell) == (12, 8, 5, 1, 0)
+
+
+def test_fetch_recommendation_distribution_none_when_no_0m_row():
+    from lib import finance
+    t = MagicMock()
+    t.recommendations = _fake_recs([{"period": "-1m", "strongBuy": 1, "buy": 0, "hold": 0, "sell": 0, "strongSell": 0}])
+    assert finance._fetch_recommendation_distribution(t) is None
+
+
+def test_fetch_recommendation_distribution_none_on_all_zero():
+    from lib import finance
+    t = MagicMock()
+    t.recommendations = _fake_recs([{"period": "0m", "strongBuy": 0, "buy": 0, "hold": 0, "sell": 0, "strongSell": 0}])
+    assert finance._fetch_recommendation_distribution(t) is None
+
+
+def test_fetch_recommendation_distribution_none_on_exception():
+    from lib import finance
+    t = MagicMock()
+    type(t).recommendations = PropertyMock(side_effect=RuntimeError("boom"))
+    assert finance._fetch_recommendation_distribution(t) is None
+
+
+def test_fetch_snapshot_attaches_analyst_distribution():
+    from lib import finance
+    fake_ticker = MagicMock()
+    fake_ticker.info = dict(_HAPPY_INFO)
+    fake_ticker.recommendations = _fake_recs([
+        {"period": "0m", "strongBuy": 12, "buy": 8, "hold": 5, "sell": 1, "strongSell": 0},
+    ])
+    with patch.object(finance, "yfinance") as yf:
+        yf.Ticker.return_value = fake_ticker
+        s = finance.fetch_snapshot("MDB")
+    assert s.analyst_distribution is not None
+    assert s.analyst_distribution.strong_buy == 12
+    assert s.analyst_distribution.strong_sell == 0
 
 
 def test_snapshot_defaults_and_required_fields():
@@ -37,6 +91,7 @@ def test_snapshot_full_shape_round_trips_through_model_dump():
         "analyst_recommendation": "buy",
         "analyst_opinion_count": 34,
         "business_summary": "MongoDB, Inc. develops a document-based database.",
+        "analyst_distribution": None,
         "currency": "USD",
         "as_of": "2026-07-02T12:00:00Z",
     }
@@ -235,13 +290,16 @@ def test_fetch_snapshot_emits_success_metrics(monkeypatch):
     calls = _spy_snapshot_metrics(monkeypatch)
     fake_ticker = MagicMock()
     fake_ticker.info = dict(_HAPPY_INFO)
+    fake_ticker.recommendations = _fake_recs([
+        {"period": "0m", "strongBuy": 12, "buy": 8, "hold": 5, "sell": 1, "strongSell": 0},
+    ])
     with patch.object(finance, "yfinance") as yf:
         yf.Ticker.return_value = fake_ticker
         finance.fetch_snapshot("MDB")
     assert calls["fetch"] == [("success", "MDB")]
-    assert calls["backfilled"] == []          # regularMarketPrice present → no fallback
-    assert calls["field_missing"] == []       # _HAPPY_INFO fills all 12 key fields
-    assert calls["completeness"] == [12]
+    assert calls["backfilled"] == []
+    assert calls["field_missing"] == []
+    assert calls["completeness"] == [13]
 
 
 def test_fetch_snapshot_emits_backfilled_on_history_fallback(monkeypatch):
@@ -281,6 +339,7 @@ def test_fetch_snapshot_emits_field_missing_and_completeness_for_partial(monkeyp
         "industry", "close", "previous_close", "market_cap",
         "fifty_two_week_high", "fifty_two_week_low", "average_volume",
         "analyst_recommendation", "analyst_opinion_count", "business_summary",
+        "analyst_distribution",
     }
     assert calls["completeness"] == [2]
 
