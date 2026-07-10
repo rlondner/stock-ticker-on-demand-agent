@@ -76,7 +76,7 @@ export function JobLivePoller({ initialJob }: { initialJob: SerializedJob }) {
           <KeyInsights signals={job.result?.signals ?? null} lastUpdatedLabel={lastUpdatedLabel} />
           <section className="grid grid-cols-12 gap-6">
             <RawLLMResponse result={job.result} />
-            <AnalystSentiment />
+            <AnalystSentiment snapshot={job.result?.snapshot ?? null} />
           </section>
         </>
       )}
