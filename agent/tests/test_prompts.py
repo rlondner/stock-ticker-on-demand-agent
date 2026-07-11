@@ -24,9 +24,11 @@ def _snap(**overrides) -> Snapshot:
     return Snapshot(**base)
 
 
-def test_system_prompt_does_not_mention_web_search():
-    assert "web_search" not in SYSTEM_PROMPT
-    assert "web search" not in SYSTEM_PROMPT.lower()
+def test_system_prompt_uses_web_search_and_thesis_schema():
+    assert "web_search" in SYSTEM_PROMPT
+    assert "bull_case" in SYSTEM_PROMPT
+    assert "bear_case" in SYSTEM_PROMPT
+    assert "key_risks" in SYSTEM_PROMPT
 
 
 def test_system_prompt_allows_null_sources():
@@ -59,7 +61,7 @@ def test_user_prompt_without_snapshot_uses_fallback():
     # No prices/company names invented into the fallback.
     assert "342.15" not in p
     assert "MongoDB" not in p
-    # Signal the model that data is missing.
+    # Indicate to the model that data is missing.
     assert "unavailable" in p.lower() or "no live facts" in p.lower()
 
 
