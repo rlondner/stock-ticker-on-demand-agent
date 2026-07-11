@@ -65,7 +65,7 @@ Tracer: `trace.get_tracer("stock-agent")` (setup in `agent/lib/observability.py`
 | Span          | File                | Attributes / events                                            |
 |---------------|---------------------|----------------------------------------------------------------|
 | `agent.run`   | `agent/agent.py`    | `job_id`, `ticker`, `final_status` (`complete`/`failed`)       |
-| `llm.analyze` | `agent/lib/llm.py`  | `model`, `api` (`responses`/`chat.completions`), `tokens_in`, `tokens_out`; event `llm.empty_response` |
+| `llm.analyze` | `agent/lib/llm.py`  | `model`, `api`, `tokens_in`, `tokens_out`, `llm.iterations`, `llm.tools_used`, `llm.response.recommendation`, `llm.response.confidence`, `llm.response.grounding` |
 
 ### Python agent — auto-instrumentation
 `httpx` (HTTP), `psycopg` (Neon DB), `openai` (LLM calls), and `logging`.
