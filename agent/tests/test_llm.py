@@ -402,3 +402,47 @@ def test_analyze_records_llm_duration(monkeypatch):
 
     client.analyze("AAPL")
     assert seen == [("gpt-4.1-mini", "responses", "AAPL")]
+
+
+def test_responses_path_retries_on_empty_then_succeeds(monkeypatch):
+    """Responses-path: empty output_text on first call triggers EmptyLLMResponseError
+    which tenacity retries; second call returns valid JSON → analyze returns a Thesis."""
+    import importlib, lib.metrics as mtr, lib.llm as llm
+    from types import SimpleNamespace
+    importlib.reload(mtr)
+    monkeypatch.setattr(mtr, "record_llm_tokens", lambda *a, **kw: None)
+    monkeypatch.setattr(mtr, "record_llm_call", lambda *a, **kw: None)
+    monkeypatch.setattr(mtr, "record_llm_empty_response", lambda *a, **kw: None)
+    monkeypatch.setattr(mtr, "record_llm_duration", lambda *a, **kw: None)
+    importlib.reload(llm)
+
+    call_count = {"n": 0}
+
+    class _FakeResponsesRetry:
+        def create(self, **kw):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                # First call: empty output_text → triggers EmptyLLMResponseError
+                return SimpleNamespace(
+                    output=[],
+                    output_text="",
+                    usage=SimpleNamespace(input_tokens=10, output_tokens=0),
+                )
+            # Second call: valid thesis JSON
+            return SimpleNamespace(
+                output=[],
+                output_text=_THESIS_JSON,
+                usage=SimpleNamespace(input_tokens=10, output_tokens=40),
+            )
+
+    client = llm.OpenAIClient.__new__(llm.OpenAIClient)
+    client._client = SimpleNamespace(responses=_FakeResponsesRetry())
+    client._model = "gpt-4.1-mini"
+    client._use_responses_api = True
+
+    with patch("lib.llm.wait_exponential", return_value=lambda *a, **kw: 0):
+        result = client.analyze("MSFT")
+
+    assert isinstance(result, llm.Thesis)
+    assert result.recommendation == "buy"
+    assert call_count["n"] == 2

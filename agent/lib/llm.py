@@ -6,7 +6,7 @@ import time
 from typing import Protocol
 from pydantic import BaseModel, Field
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
-from openai import OpenAI, APIError, RateLimitError, APIConnectionError, InternalServerError
+from openai import OpenAI, RateLimitError, APIConnectionError, InternalServerError
 from opentelemetry import trace
 from .prompts import SYSTEM_PROMPT, user_prompt
 from .observability import get_host, emit_log
@@ -79,6 +79,8 @@ def _record_raw_response(span, text: str, finish_reason: str | None) -> None:
 
 
 def _record_parsed_response(span, thesis: "Thesis") -> None:
+    """Attach the parsed thesis to the span and emit a structured log so
+    recommendations are queryable across all backends without parsing raw text."""
     span.set_attribute("llm.response.recommendation", thesis.recommendation)
     span.set_attribute("llm.response.confidence", thesis.confidence)
     span.set_attribute("llm.response.grounding", thesis.grounding)
@@ -179,7 +181,10 @@ class OpenAIClient:
             try:
                 if self._use_responses_api:
                     def _create(input, tools):
-                        return self._client.responses.create(model=self._model, input=input, tools=tools)
+                        kw = {"model": self._model, "input": input}
+                        if tools:
+                            kw["tools"] = tools
+                        return self._client.responses.create(**kw)
                     loop = run_agent_loop(
                         _create, messages, tools=[{"type": "web_search"}],
                         function_registry={}, max_iters=MAX_ITERS, timeout_s=LOOP_TIMEOUT_S,
