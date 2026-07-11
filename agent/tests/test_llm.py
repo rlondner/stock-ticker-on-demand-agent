@@ -293,8 +293,10 @@ def test_analyze_grounding_researched_when_web_search_and_citation(monkeypatch):
     importlib.reload(llm)
 
     from types import SimpleNamespace
+    captured = {}
     class _WS:
         def create(self, **kw):
+            captured["tools"] = kw.get("tools")
             return SimpleNamespace(
                 output=[SimpleNamespace(type="web_search_call")],
                 output_text=_THESIS_JSON,
@@ -306,6 +308,7 @@ def test_analyze_grounding_researched_when_web_search_and_citation(monkeypatch):
     client._use_responses_api = True
     t = client.analyze("AAPL")
     assert t.grounding == "researched"   # web_search ran + bull_case has a source_url
+    assert {"type": "web_search"} in (captured["tools"] or [])
 
 
 def test_analyze_chat_completions_fallback_is_snapshot_only(monkeypatch):
