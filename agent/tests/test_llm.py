@@ -4,52 +4,70 @@ import httpx
 import pytest
 from openai import InternalServerError
 from pydantic import ValidationError
-from lib.llm import Analysis, EmptyLLMResponseError, OpenAIClient, Signal, _env_flag, parse_response
+from lib.llm import Thesis, EmptyLLMResponseError, OpenAIClient, _env_flag, parse_thesis
 
-def test_analysis_validates_buy_hold_sell():
-    a = Analysis(recommendation="buy", summary="strong fundamentals", signals=[])
-    assert a.recommendation == "buy"
+_THESIS_JSON = (
+    '{"recommendation":"buy","confidence":"medium","summary":"s",'
+    '"bull_case":[{"claim":"c","evidence":"e","source_url":"https://x.test/a"}],'
+    '"bear_case":[{"claim":"c","evidence":"e","source_url":null}],'
+    '"key_risks":[{"claim":"c","evidence":"e","source_url":null}]}'
+)
 
-def test_analysis_rejects_invalid_recommendation():
+
+class _FakeResponses:
+    def __init__(self, text): self._text = text
+    def create(self, **kw):
+        from types import SimpleNamespace
+        return SimpleNamespace(output=[], output_text=self._text,
+                               usage=SimpleNamespace(input_tokens=100, output_tokens=40))
+
+class _FakeResponsesClient:
+    def __init__(self, text): self.responses = _FakeResponses(text)
+
+
+def test_thesis_validates_buy_hold_sell():
+    t = parse_thesis(_THESIS_JSON)
+    assert t.recommendation == "buy"
+
+def test_thesis_rejects_invalid_recommendation():
+    bad = _THESIS_JSON.replace('"buy"', '"strong-buy"')
     with pytest.raises(ValidationError):
-        Analysis(recommendation="strong-buy", summary="x", signals=[])
+        parse_thesis(bad)
 
-def test_analysis_accepts_signals():
-    a = Analysis(
-        recommendation="hold",
-        summary="mixed",
-        signals=[Signal(label="P/E", evidence="32, above average", source="https://example.com/aapl")],
-    )
-    assert len(a.signals) == 1
-    assert a.signals[0].source == "https://example.com/aapl"
+def test_thesis_rejects_invalid_confidence():
+    bad = _THESIS_JSON.replace('"medium"', '"very-high"')
+    with pytest.raises(ValidationError):
+        parse_thesis(bad)
 
-def test_parse_response_extracts_json():
-    payload = json.dumps({
-        "recommendation": "sell",
-        "summary": "declining margins",
-        "signals": [{"label": "margin", "evidence": "down 4pp YoY", "source": None}],
-    })
-    a = parse_response(payload)
-    assert a.recommendation == "sell"
+def test_thesis_accepts_bull_bear_risks():
+    t = parse_thesis(_THESIS_JSON)
+    assert len(t.bull_case) == 1
+    assert t.bull_case[0].source_url == "https://x.test/a"
+    assert t.bear_case[0].source_url is None
+    assert len(t.key_risks) == 1
 
-def test_parse_response_rejects_malformed():
+def test_parse_thesis_extracts_json():
+    t = parse_thesis(_THESIS_JSON)
+    assert t.recommendation == "buy"
+
+def test_parse_thesis_rejects_malformed():
     with pytest.raises(ValueError):
-        parse_response("not json")
+        parse_thesis("not json")
 
 
-def test_parse_response_error_includes_snippet_and_length():
+def test_parse_thesis_error_includes_snippet_and_length():
     raw = "Sure, here you go: not actually json at all"
     with pytest.raises(ValueError) as exc_info:
-        parse_response(raw)
+        parse_thesis(raw)
     msg = str(exc_info.value)
     assert f"raw_length={len(raw)}" in msg
     assert "Sure, here you go" in msg
 
 
-def test_parse_response_error_caps_snippet_at_200_chars():
+def test_parse_thesis_error_caps_snippet_at_200_chars():
     raw = "x" * 5000
     with pytest.raises(ValueError) as exc_info:
-        parse_response(raw)
+        parse_thesis(raw)
     msg = str(exc_info.value)
     assert "raw_length=5000" in msg
     # The repr of 200 x's is "'xxx…xxx'" — 200 chars + 2 quotes.
@@ -81,20 +99,16 @@ def test_env_flag_defaults_true(monkeypatch, value, expected):
 
 
 def _fake_responses_resp(text: str):
-    resp = MagicMock()
-    resp.output_text = text
-    resp.usage = MagicMock(input_tokens=10, output_tokens=20)
-    return resp
+    from types import SimpleNamespace
+    return SimpleNamespace(output=[], output_text=text,
+                           usage=SimpleNamespace(input_tokens=10, output_tokens=20))
 
 
 def _fake_chat_resp(text: str):
     resp = MagicMock()
-    resp.choices = [MagicMock(message=MagicMock(content=text))]
+    resp.choices = [MagicMock(message=MagicMock(content=text), finish_reason="stop")]
     resp.usage = MagicMock(prompt_tokens=10, completion_tokens=20)
     return resp
-
-
-VALID_JSON = json.dumps({"recommendation": "hold", "summary": "ok", "signals": []})
 
 
 def test_client_default_uses_responses_api(monkeypatch):
@@ -102,10 +116,10 @@ def test_client_default_uses_responses_api(monkeypatch):
     monkeypatch.delenv("OPENAI_USE_RESPONSES_API", raising=False)
     with patch("lib.llm.OpenAI") as openai_ctor:
         instance = openai_ctor.return_value
-        instance.responses.create.return_value = _fake_responses_resp(VALID_JSON)
+        instance.responses.create.return_value = _fake_responses_resp(_THESIS_JSON)
         client = OpenAIClient()
         result = client.analyze("AAPL")
-        assert result.recommendation == "hold"
+        assert result.recommendation == "buy"
         instance.responses.create.assert_called_once()
         instance.chat.completions.create.assert_not_called()
 
@@ -115,10 +129,10 @@ def test_client_uses_chat_completions_when_flag_false(monkeypatch):
     monkeypatch.setenv("OPENAI_USE_RESPONSES_API", "false")
     with patch("lib.llm.OpenAI") as openai_ctor:
         instance = openai_ctor.return_value
-        instance.chat.completions.create.return_value = _fake_chat_resp(VALID_JSON)
+        instance.chat.completions.create.return_value = _fake_chat_resp(_THESIS_JSON)
         client = OpenAIClient()
         result = client.analyze("AAPL")
-        assert result.recommendation == "hold"
+        assert result.recommendation == "buy"
         instance.chat.completions.create.assert_called_once()
         instance.responses.create.assert_not_called()
         # chat.completions path must NOT pass the OpenAI hosted web_search tool.
@@ -150,12 +164,12 @@ def test_client_retries_on_empty_response_then_succeeds(monkeypatch):
         instance.chat.completions.create.side_effect = [
             _empty_chat_resp(),
             _none_chat_resp(),
-            _fake_chat_resp(VALID_JSON),
+            _fake_chat_resp(_THESIS_JSON),
         ]
         with patch("lib.llm.wait_exponential", return_value=lambda *a, **kw: 0):
             client = OpenAIClient()
             result = client.analyze("AAPL")
-        assert result.recommendation == "hold"
+        assert result.recommendation == "buy"
         assert instance.chat.completions.create.call_count == 3
 
 
@@ -185,7 +199,7 @@ def test_client_logs_warning_and_records_span_event_on_empty(monkeypatch, caplog
         instance = openai_ctor.return_value
         instance.chat.completions.create.side_effect = [
             _empty_chat_resp(),
-            _fake_chat_resp(VALID_JSON),
+            _fake_chat_resp(_THESIS_JSON),
         ]
         span = MagicMock()
         trace_mock.get_tracer.return_value.start_as_current_span.return_value.__enter__.return_value = span
@@ -224,28 +238,28 @@ def test_client_retries_on_5xx_then_succeeds(monkeypatch):
         instance.chat.completions.create.side_effect = [
             _make_internal_server_error(529),
             _make_internal_server_error(529),
-            _fake_chat_resp(VALID_JSON),
+            _fake_chat_resp(_THESIS_JSON),
         ]
         with patch("lib.llm.wait_exponential", return_value=lambda *a, **kw: 0):
             client = OpenAIClient()
             result = client.analyze("AAPL")
-        assert result.recommendation == "hold"
+        assert result.recommendation == "buy"
         assert instance.chat.completions.create.call_count == 3
 
-def test_parse_response_handles_json_fence():
-    payload = '```json\n{"recommendation":"buy","summary":"x","signals":[]}\n```'
-    a = parse_response(payload)
-    assert a.recommendation == "buy"
+def test_parse_thesis_handles_json_fence():
+    fenced = '```json\n' + _THESIS_JSON + '\n```'
+    t = parse_thesis(fenced)
+    assert t.recommendation == "buy"
 
-def test_parse_response_handles_bare_fence():
-    payload = '```\n{"recommendation":"hold","summary":"x","signals":[]}\n```'
-    a = parse_response(payload)
-    assert a.recommendation == "hold"
+def test_parse_thesis_handles_bare_fence():
+    fenced = '```\n' + _THESIS_JSON + '\n```'
+    t = parse_thesis(fenced)
+    assert t.recommendation == "buy"
 
-def test_parse_response_handles_inline_fence():
-    payload = '```{"recommendation":"sell","summary":"x","signals":[]}```'
-    a = parse_response(payload)
-    assert a.recommendation == "sell"
+def test_parse_thesis_handles_inline_fence():
+    fenced = '```' + _THESIS_JSON + '```'
+    t = parse_thesis(fenced)
+    assert t.recommendation == "buy"
 
 
 def test_analyze_emits_llm_metrics(monkeypatch):
@@ -253,34 +267,69 @@ def test_analyze_emits_llm_metrics(monkeypatch):
     importlib.reload(mtr)
     seen = {"tokens": [], "calls": []}
     monkeypatch.setattr(mtr, "record_llm_tokens",
-                        lambda model, api, tokens_in, tokens_out, ticker: seen["tokens"].append((model, api, tokens_in, tokens_out, ticker)))
+                        lambda model, api, tin, tout, ticker: seen["tokens"].append((model, api, tin, tout, ticker)))
     monkeypatch.setattr(mtr, "record_llm_call",
                         lambda model, api, outcome, ticker: seen["calls"].append((model, api, outcome, ticker)))
     importlib.reload(llm)
 
-    valid = '{"recommendation":"buy","summary":"s","signals":[]}'
-
-    class FakeResponses:
-        def create(self, **kw):
-            class R:
-                output_text = valid
-                status = "completed"
-                class usage:  # noqa: N801
-                    input_tokens = 100
-                    output_tokens = 40
-            return R()
-
-    class FakeClient:
-        responses = FakeResponses()
-
     client = llm.OpenAIClient.__new__(llm.OpenAIClient)
-    client._client = FakeClient()
+    client._client = _FakeResponsesClient(_THESIS_JSON)
     client._model = "gpt-4.1-mini"
     client._use_responses_api = True
 
-    client.analyze("AAPL")
+    t = client.analyze("AAPL")
+    assert isinstance(t, llm.Thesis)
+    assert t.recommendation == "buy"
+    assert t.grounding == "snapshot_only"   # fake returns no tool items → tools_ran False
     assert seen["tokens"] == [("gpt-4.1-mini", "responses", 100, 40, "AAPL")]
     assert seen["calls"] == [("gpt-4.1-mini", "responses", "ok", "AAPL")]
+
+
+def test_analyze_grounding_researched_when_web_search_and_citation(monkeypatch):
+    import importlib, lib.metrics as mtr, lib.llm as llm
+    importlib.reload(mtr)
+    monkeypatch.setattr(mtr, "record_llm_tokens", lambda *a, **k: None)
+    monkeypatch.setattr(mtr, "record_llm_call", lambda *a, **k: None)
+    importlib.reload(llm)
+
+    from types import SimpleNamespace
+    captured = {}
+    class _WS:
+        def create(self, **kw):
+            captured["tools"] = kw.get("tools")
+            return SimpleNamespace(
+                output=[SimpleNamespace(type="web_search_call")],
+                output_text=_THESIS_JSON,
+                usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+            )
+    client = llm.OpenAIClient.__new__(llm.OpenAIClient)
+    client._client = SimpleNamespace(responses=_WS())
+    client._model = "gpt-4.1-mini"
+    client._use_responses_api = True
+    t = client.analyze("AAPL")
+    assert t.grounding == "researched"   # web_search ran + bull_case has a source_url
+    assert {"type": "web_search"} in (captured["tools"] or [])
+
+
+def test_analyze_chat_completions_fallback_is_snapshot_only(monkeypatch):
+    import importlib, lib.metrics as mtr, lib.llm as llm
+    importlib.reload(mtr)
+    monkeypatch.setattr(mtr, "record_llm_tokens", lambda *a, **k: None)
+    monkeypatch.setattr(mtr, "record_llm_call", lambda *a, **k: None)
+    importlib.reload(llm)
+
+    from unittest.mock import MagicMock
+    resp = MagicMock()
+    resp.choices = [MagicMock(message=MagicMock(content=_THESIS_JSON), finish_reason="stop")]
+    resp.usage = MagicMock(prompt_tokens=50, completion_tokens=25)
+    fake = MagicMock()
+    fake.chat.completions.create.return_value = resp
+    client = llm.OpenAIClient.__new__(llm.OpenAIClient)
+    client._client = fake
+    client._model = "gpt-4.1-mini"
+    client._use_responses_api = False
+    t = client.analyze("TSLA")
+    assert t.recommendation == "buy" and t.grounding == "snapshot_only"
 
 
 def test_chat_completions_branch_emits_tokens_and_call(monkeypatch):
@@ -294,13 +343,11 @@ def test_chat_completions_branch_emits_tokens_and_call(monkeypatch):
                         lambda model, api, outcome, ticker: seen["calls"].append((model, api, outcome, ticker)))
     importlib.reload(llm)
 
-    valid = '{"recommendation":"sell","summary":"s","signals":[]}'
-
     class FakeCompletions:
         def create(self, **kw):
             from unittest.mock import MagicMock
             resp = MagicMock()
-            resp.choices = [MagicMock(message=MagicMock(content=valid), finish_reason="stop")]
+            resp.choices = [MagicMock(message=MagicMock(content=_THESIS_JSON), finish_reason="stop")]
             resp.usage = MagicMock(prompt_tokens=50, completion_tokens=25)
             return resp
 
@@ -348,25 +395,54 @@ def test_analyze_records_llm_duration(monkeypatch):
                         lambda model, api, duration_ms, ticker: seen.append((model, api, ticker)))
     importlib.reload(llm)
 
-    valid = '{"recommendation":"buy","summary":"s","signals":[]}'
-
-    class FakeResponses:
-        def create(self, **kw):
-            class R:
-                output_text = valid
-                status = "completed"
-                class usage:  # noqa: N801
-                    input_tokens = 10
-                    output_tokens = 5
-            return R()
-
-    class FakeClient:
-        responses = FakeResponses()
-
     client = llm.OpenAIClient.__new__(llm.OpenAIClient)
-    client._client = FakeClient()
+    client._client = _FakeResponsesClient(_THESIS_JSON)
     client._model = "gpt-4.1-mini"
     client._use_responses_api = True
 
     client.analyze("AAPL")
     assert seen == [("gpt-4.1-mini", "responses", "AAPL")]
+
+
+def test_responses_path_retries_on_empty_then_succeeds(monkeypatch):
+    """Responses-path: empty output_text on first call triggers EmptyLLMResponseError
+    which tenacity retries; second call returns valid JSON → analyze returns a Thesis."""
+    import importlib, lib.metrics as mtr, lib.llm as llm
+    from types import SimpleNamespace
+    importlib.reload(mtr)
+    monkeypatch.setattr(mtr, "record_llm_tokens", lambda *a, **kw: None)
+    monkeypatch.setattr(mtr, "record_llm_call", lambda *a, **kw: None)
+    monkeypatch.setattr(mtr, "record_llm_empty_response", lambda *a, **kw: None)
+    monkeypatch.setattr(mtr, "record_llm_duration", lambda *a, **kw: None)
+    importlib.reload(llm)
+
+    call_count = {"n": 0}
+
+    class _FakeResponsesRetry:
+        def create(self, **kw):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                # First call: empty output_text → triggers EmptyLLMResponseError
+                return SimpleNamespace(
+                    output=[],
+                    output_text="",
+                    usage=SimpleNamespace(input_tokens=10, output_tokens=0),
+                )
+            # Second call: valid thesis JSON
+            return SimpleNamespace(
+                output=[],
+                output_text=_THESIS_JSON,
+                usage=SimpleNamespace(input_tokens=10, output_tokens=40),
+            )
+
+    client = llm.OpenAIClient.__new__(llm.OpenAIClient)
+    client._client = SimpleNamespace(responses=_FakeResponsesRetry())
+    client._model = "gpt-4.1-mini"
+    client._use_responses_api = True
+
+    with patch("lib.llm.wait_exponential", return_value=lambda *a, **kw: 0):
+        result = client.analyze("MSFT")
+
+    assert isinstance(result, llm.Thesis)
+    assert result.recommendation == "buy"
+    assert call_count["n"] == 2

@@ -3,7 +3,7 @@ import uuid
 import pytest
 import psycopg
 from unittest.mock import patch
-from lib.llm import Analysis, Signal
+from lib.llm import Thesis, ThesisPoint
 from lib.finance import Snapshot
 
 @pytest.fixture
@@ -24,10 +24,13 @@ def fresh_job(neon_url):
         conn.execute("DELETE FROM jobs WHERE id = %s", (job_id,))
         conn.commit()
 
-FAKE_ANALYSIS = Analysis(
+FAKE_ANALYSIS = Thesis(
     recommendation="buy",
+    confidence="medium",
     summary="strong",
-    signals=[Signal(label="rev", evidence="up 10%", source=None)],
+    bull_case=[ThesisPoint(claim="rev", evidence="up 10%", source_url=None)],
+    bear_case=[ThesisPoint(claim="risk", evidence="competition", source_url=None)],
+    key_risks=[ThesisPoint(claim="macro", evidence="rates rising", source_url=None)],
 )
 
 def test_main_happy_path(neon_url, fresh_job, monkeypatch):
