@@ -71,7 +71,7 @@ def _get_financials(args):
     for i in range(len(revenue)):
         prev = revenue[i + 1] if i + 1 < len(revenue) else None
         cur = revenue[i]
-        growth.append(round((cur - prev) / prev * 100, 1) if (prev and cur is not None) else None)
+        growth.append(round((cur - prev) / prev * 100, 1) if (prev is not None and prev > 0 and cur is not None) else None)
     return {
         "fiscal_years": fiscal_years,
         "revenue": revenue,

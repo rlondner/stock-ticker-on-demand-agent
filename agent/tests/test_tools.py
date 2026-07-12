@@ -64,15 +64,18 @@ def test_get_financials_curates_three_years():
     income = _frame(to_dict={
         "2025-12-31": {"Total Revenue": 1000, "Net Income": 100, "Gross Profit": 600, "Operating Income": 200},
         "2024-12-31": {"Total Revenue": 900, "Net Income": 80, "Gross Profit": 520, "Operating Income": 150},
+        "2023-12-31": {"Total Revenue": 800, "Net Income": 60, "Gross Profit": 460, "Operating Income": 130},
     })
     with patch.object(tools, "yfinance") as yf:
         yf.Ticker.return_value = _fake_ticker(income_stmt=income)
         out = tools._get_financials({"ticker": "MDB"})
-    assert out["fiscal_years"] == ["2025", "2024"]
-    assert out["revenue"] == [1000.0, 900.0]
-    assert out["gross_margin_pct"] == [60.0, round(520 / 900 * 100, 1)]
+    assert out["fiscal_years"] == ["2025", "2024", "2023"]
+    assert out["revenue"] == [1000.0, 900.0, 800.0]
+    assert out["gross_margin_pct"] == [60.0, round(520 / 900 * 100, 1), round(460 / 800 * 100, 1)]
     # YoY growth for the most-recent year vs the prior: (1000-900)/900*100
     assert out["revenue_growth_pct"][0] == round((1000 - 900) / 900 * 100, 1)
+    assert len(out["fiscal_years"]) == 3
+    assert out["revenue_growth_pct"][-1] is None
 
 
 def test_get_financials_empty_returns_error():
