@@ -186,7 +186,7 @@ class OpenAIClient:
                         if tools:
                             kw["tools"] = tools
                         return self._client.responses.create(**kw)
-                    _schemas, _registry = build_toolset()
+                    _schemas, _registry = build_toolset(ticker)
                     loop = run_agent_loop(
                         _create, messages, tools=[{"type": "web_search"}, *_schemas],
                         function_registry=_registry, max_iters=MAX_ITERS, timeout_s=LOOP_TIMEOUT_S,

@@ -2,21 +2,40 @@
 structured data (yfinance-backed). Decoupled from agent_loop and llm. Every tool
 is wrapped by _observed_tool so it can never crash the loop and every call is
 visible in logs + on the current trace span."""
+import datetime
+
 import yfinance
 from opentelemetry import trace
 
 from .observability import emit_log
 
 
-def _observed_tool(name, fn):
+def _observed_tool(name, fn, bound_ticker=None):
     """Wrap a raw tool(args)->dict with uniform guarding + observability.
     Emits tool.<name>.ok / .failed logs and an outcome span event on every call.
     A raised exception OR a returned {'error': ...} counts as a failure; a tool
-    can never crash the loop (a failure returns {'error': ...})."""
+    can never crash the loop (a failure returns {'error': ...}).
+
+    When ``bound_ticker`` is set the tool is pinned to the company under
+    analysis: a mismatching model-supplied ticker is rejected (so a hallucinated
+    symbol can't pull another company's numbers into the thesis), and the bound
+    ticker is otherwise injected."""
     def _run(args):
-        args = args or {}
-        ticker = args.get("ticker")
+        # The model controls the JSON in function_call.arguments; json.loads can
+        # yield a non-dict. Coerce BEFORE any .get so the observability guarantee
+        # below (failed log + span event) always holds.
+        args = args if isinstance(args, dict) else {}
         span = trace.get_current_span()
+        if bound_ticker is not None:
+            supplied = args.get("ticker")
+            if supplied and str(supplied).strip().upper() != bound_ticker.upper():
+                reason = (f"ticker {supplied!r} does not match the analyzed "
+                          f"ticker {bound_ticker!r}")
+                emit_log("warn", f"tool.{name}.failed", ticker=bound_ticker, reason=reason)
+                span.add_event(f"tool.{name}", {"outcome": "error", "error": reason})
+                return {"error": reason}
+            args = {**args, "ticker": bound_ticker}
+        ticker = args.get("ticker")
         try:
             result = fn(args)
         except Exception as exc:
@@ -53,7 +72,9 @@ def _get_financials(args):
     if df is None or getattr(df, "empty", True):
         return {"error": "no financials"}
     data = df.to_dict()  # {period: {line_item: value}}
-    cols = list(data.keys())[:_FINANCIAL_YEARS]
+    # Keep one extra (oldest) year so the oldest *emitted* year still gets a YoY
+    # growth figure; the extra year is trimmed off the emitted lists below.
+    cols = list(data.keys())[:_FINANCIAL_YEARS + 1]
     if not cols:
         return {"error": "no financials"}
     fiscal_years, revenue, net_income, gross_margin, op_margin = [], [], [], [], []
@@ -72,13 +93,15 @@ def _get_financials(args):
         prev = revenue[i + 1] if i + 1 < len(revenue) else None
         cur = revenue[i]
         growth.append(round((cur - prev) / prev * 100, 1) if (prev is not None and prev > 0 and cur is not None) else None)
+    # Trim the extra prior year used only to seed the oldest growth figure.
+    n = _FINANCIAL_YEARS
     return {
-        "fiscal_years": fiscal_years,
-        "revenue": revenue,
-        "net_income": net_income,
-        "gross_margin_pct": gross_margin,
-        "operating_margin_pct": op_margin,
-        "revenue_growth_pct": growth,
+        "fiscal_years": fiscal_years[:n],
+        "revenue": revenue[:n],
+        "net_income": net_income[:n],
+        "gross_margin_pct": gross_margin[:n],
+        "operating_margin_pct": op_margin[:n],
+        "revenue_growth_pct": growth[:n],
     }
 
 
@@ -106,20 +129,36 @@ def _earnings_date(rec):
     return None
 
 
+def _parse_date(date_str):
+    """Parse an ISO 'YYYY-MM-DD' prefix to a date, or None if unparseable."""
+    try:
+        return datetime.date.fromisoformat(date_str[:10])
+    except (TypeError, ValueError):
+        return None
+
+
 def _get_earnings(args):
     df = yfinance.Ticker(args.get("ticker")).earnings_dates
     if df is None or getattr(df, "empty", True):
         return {"error": "no earnings data"}
     records = df.reset_index().to_dict("records")
+    today = datetime.date.today()
     next_date, recent = None, []
     for rec in records:
+        date_str = _earnings_date(rec)
         actual = _num(rec.get("Reported EPS"))
         if actual is None:
-            if next_date is None:
-                next_date = _earnings_date(rec)
+            # An unreported row is only the *next* earnings date if it is
+            # strictly in the future. yfinance lists several future quarters
+            # (newest-first) and leaves past quarters' EPS NaN when a report is
+            # missing, so pick the earliest genuinely-future date, not the first
+            # unreported row (which is the furthest-out or even a past gap).
+            d = _parse_date(date_str)
+            if d is not None and d > today and (next_date is None or date_str < next_date):
+                next_date = date_str
         elif len(recent) < _EARNINGS_QUARTERS:
             recent.append({
-                "date": _earnings_date(rec),
+                "date": date_str,
                 "eps_estimate": _num(rec.get("EPS Estimate")),
                 "eps_actual": actual,
                 "surprise_pct": _num(rec.get("Surprise(%)")),
@@ -152,9 +191,13 @@ _TOOLS = (
 )
 
 
-def build_toolset():
+def build_toolset(ticker=None):
     """Return (schemas, registry) to drop into run_agent_loop: the Responses-API
-    function-tool schemas and a name->callable registry of observed tools."""
+    function-tool schemas and a name->callable registry of observed tools.
+
+    Pass ``ticker`` (the company under analysis) to pin every tool to it so a
+    model-supplied mismatching/hallucinated symbol is rejected instead of
+    returning another company's data."""
     schemas = [_schema(name, desc) for name, _fn, desc in _TOOLS]
-    registry = {name: _observed_tool(name, fn) for name, fn, _desc in _TOOLS}
+    registry = {name: _observed_tool(name, fn, ticker) for name, fn, _desc in _TOOLS}
     return schemas, registry
