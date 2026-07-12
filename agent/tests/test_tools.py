@@ -27,9 +27,11 @@ def test_observed_tool_swallows_exception(monkeypatch):
     run = tools._observed_tool("get_x", boom)
     out = run({"ticker": "AAPL"})
     assert "error" in out and "nope" in out["error"]
-    assert any(m == "tool.get_x.failed" and lvl == "warn" for lvl, m, _ in logs)
+    assert any(lvl == "warn" and m == "tool.get_x.failed" and "nope" in kw.get("reason", "")
+               for lvl, m, kw in logs)
     ev = span.add_event.call_args_list[-1]
     assert ev.args[0] == "tool.get_x" and ev.args[1]["outcome"] == "error"
+    assert "nope" in ev.args[1]["error"]
 
 
 def test_observed_tool_treats_error_dict_as_failure(monkeypatch):
