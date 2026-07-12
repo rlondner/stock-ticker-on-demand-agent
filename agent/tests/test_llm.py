@@ -446,3 +446,31 @@ def test_responses_path_retries_on_empty_then_succeeds(monkeypatch):
     assert isinstance(result, llm.Thesis)
     assert result.recommendation == "buy"
     assert call_count["n"] == 2
+
+
+def test_analyze_passes_data_tools_and_web_search(monkeypatch):
+    import importlib, lib.metrics as mtr, lib.llm as llm
+    importlib.reload(mtr)
+    monkeypatch.setattr(mtr, "record_llm_tokens", lambda *a, **k: None)
+    monkeypatch.setattr(mtr, "record_llm_call", lambda *a, **k: None)
+    importlib.reload(llm)
+
+    from types import SimpleNamespace
+    captured = {}
+
+    class _WS:
+        def create(self, **kw):
+            captured["tools"] = kw.get("tools")
+            return SimpleNamespace(output=[], output_text=_THESIS_JSON,
+                                   usage=SimpleNamespace(input_tokens=1, output_tokens=1))
+
+    client = llm.OpenAIClient.__new__(llm.OpenAIClient)
+    client._client = SimpleNamespace(responses=_WS())
+    client._model = "gpt-4.1-mini"
+    client._use_responses_api = True
+    client.analyze("AAPL")
+
+    tools = captured["tools"] or []
+    assert {"type": "web_search"} in tools
+    names = {t.get("name") for t in tools if isinstance(t, dict)}
+    assert {"get_financials", "get_valuation", "get_earnings"} <= names

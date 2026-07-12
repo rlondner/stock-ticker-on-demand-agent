@@ -7,6 +7,9 @@ and a compact set of facts about the company. Treat those facts as ground truth
 for numbers (price, market cap, ranges, analyst counts) — do not invent or
 contradict them. Use the web_search tool to research recent news, catalysts,
 guidance, and risks that the facts do not capture.
+You may also call the tools get_financials, get_valuation, and get_earnings to
+pull precise structured numbers for a ticker; use web_search for qualitative
+research (news, catalysts, management commentary).
 
 Output ONLY a JSON object matching this schema:
 
