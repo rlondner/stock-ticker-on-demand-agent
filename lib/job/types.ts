@@ -2,6 +2,8 @@ import type { JobStatus } from "@/lib/ui/status-pill";
 import type { Recommendation } from "@/lib/ui/signal-pill";
 import type { RawSignal } from "@/lib/job/map-insights";
 
+export type ThesisPoint = { claim: string; evidence: string; source_url: string | null };
+
 export type Snapshot = {
   company_name: string | null;
   sector: string | null;
@@ -36,7 +38,13 @@ export type SerializedJob = {
   status: JobStatus;
   recommendation: Recommendation | null;
   result: {
+    recommendation?: Recommendation;
+    confidence?: string;
     summary?: string;
+    bull_case?: ThesisPoint[];
+    bear_case?: ThesisPoint[];
+    key_risks?: ThesisPoint[];
+    grounding?: string;
     signals?: RawSignal[];
     snapshot?: Snapshot | null;
   } | null;
