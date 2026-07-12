@@ -13,6 +13,7 @@ from .observability import get_host, emit_log
 from .finance import Snapshot, fetch_snapshot
 from . import metrics
 from .agent_loop import run_agent_loop
+from .tools import build_toolset
 
 logger = logging.getLogger(__name__)
 
@@ -185,9 +186,10 @@ class OpenAIClient:
                         if tools:
                             kw["tools"] = tools
                         return self._client.responses.create(**kw)
+                    _schemas, _registry = build_toolset()
                     loop = run_agent_loop(
-                        _create, messages, tools=[{"type": "web_search"}],
-                        function_registry={}, max_iters=MAX_ITERS, timeout_s=LOOP_TIMEOUT_S,
+                        _create, messages, tools=[{"type": "web_search"}, *_schemas],
+                        function_registry=_registry, max_iters=MAX_ITERS, timeout_s=LOOP_TIMEOUT_S,
                     )
                     text, tin, tout = loop.text, loop.tokens_in, loop.tokens_out
                     finish_reason = "budget_exhausted" if loop.budget_exhausted else "stop"

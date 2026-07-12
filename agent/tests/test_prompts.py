@@ -95,3 +95,8 @@ def test_user_prompt_skips_none_fields():
     assert "Sector:" not in p
     assert "None" not in p
     assert "Market cap" not in p
+
+
+def test_system_prompt_names_the_data_tools():
+    for name in ("get_financials", "get_valuation", "get_earnings"):
+        assert name in SYSTEM_PROMPT

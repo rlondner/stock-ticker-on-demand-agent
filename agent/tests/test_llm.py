@@ -446,3 +446,53 @@ def test_responses_path_retries_on_empty_then_succeeds(monkeypatch):
     assert isinstance(result, llm.Thesis)
     assert result.recommendation == "buy"
     assert call_count["n"] == 2
+
+
+def test_analyze_passes_data_tools_and_web_search(monkeypatch):
+    import importlib, lib.metrics as mtr, lib.llm as llm
+    importlib.reload(mtr)
+    monkeypatch.setattr(mtr, "record_llm_tokens", lambda *a, **k: None)
+    monkeypatch.setattr(mtr, "record_llm_call", lambda *a, **k: None)
+    monkeypatch.setattr(mtr, "record_llm_duration", lambda *a, **k: None)
+    importlib.reload(llm)
+
+    from types import SimpleNamespace
+
+    captured = {}
+
+    def _spy_run_agent_loop(*args, **kwargs):
+        # analyze calls: run_agent_loop(_create, messages, tools=..., function_registry=..., ...)
+        # tools and function_registry are always passed as keyword args in the production call.
+        captured["tools"] = kwargs.get("tools")
+        captured["registry"] = kwargs.get("function_registry")
+        return SimpleNamespace(
+            text=_THESIS_JSON,
+            tokens_in=1,
+            tokens_out=1,
+            iterations=1,
+            tools_used=[],
+            budget_exhausted=False,
+        )
+
+    monkeypatch.setattr(llm, "run_agent_loop", _spy_run_agent_loop)
+
+    client = llm.OpenAIClient.__new__(llm.OpenAIClient)
+    client._client = SimpleNamespace()  # responses API won't be called; spy intercepts
+    client._model = "gpt-4.1-mini"
+    client._use_responses_api = True
+
+    client.analyze("AAPL")
+
+    captured_tools = captured["tools"] or []
+    captured_registry = captured["registry"] or {}
+
+    # web_search hosted tool is present
+    assert {"type": "web_search"} in captured_tools
+
+    # all three function-tool schemas reach the loop
+    tool_names = {t.get("name") for t in captured_tools if isinstance(t, dict)}
+    assert {"get_financials", "get_valuation", "get_earnings"} <= tool_names
+
+    # the actual dispatch table (function_registry) is wired — not just schemas
+    assert set(captured_registry.keys()) == {"get_financials", "get_valuation", "get_earnings"}
+    assert all(callable(fn) for fn in captured_registry.values())
