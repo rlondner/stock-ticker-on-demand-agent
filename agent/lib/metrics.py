@@ -33,10 +33,33 @@ def init_metrics(resource, extra_readers=None) -> None:
     if target is not None:
         endpoint, headers = target
         from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
-        from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+        from opentelemetry.sdk.metrics import (
+            Counter,
+            Histogram,
+            ObservableCounter,
+            ObservableGauge,
+            ObservableUpDownCounter,
+            UpDownCounter,
+        )
+        from opentelemetry.sdk.metrics.export import (
+            AggregationTemporality,
+            PeriodicExportingMetricReader,
+        )
+        # Datadog's OTLP metrics intake accepts only DELTA for monotonic sums and
+        # histograms; UpDownCounters and Gauges must remain CUMULATIVE. Sending the
+        # OTel default (all CUMULATIVE) yields 400 Bad Request from the intake.
+        dd_temporality = {
+            Counter: AggregationTemporality.DELTA,
+            Histogram: AggregationTemporality.DELTA,
+            ObservableCounter: AggregationTemporality.DELTA,
+            UpDownCounter: AggregationTemporality.CUMULATIVE,
+            ObservableUpDownCounter: AggregationTemporality.CUMULATIVE,
+            ObservableGauge: AggregationTemporality.CUMULATIVE,
+        }
         readers.append(PeriodicExportingMetricReader(OTLPMetricExporter(
             endpoint=endpoint,
             headers=headers,
+            preferred_temporality=dd_temporality,
         )))
 
     _meter_provider = MeterProvider(resource=resource, metric_readers=readers)
