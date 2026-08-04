@@ -168,17 +168,20 @@ def _get_earnings(args):
     return {"next_earnings_date": next_date, "recent_quarters": recent}
 
 
-def _schema(name, description):
-    return {
-        "type": "function",
-        "name": name,
-        "description": description,
-        "parameters": {
-            "type": "object",
-            "properties": {"ticker": {"type": "string", "description": "US-listed ticker symbol"}},
-            "required": ["ticker"],
-        },
+def _schema(name, description, api="responses"):
+    """Build a function-tool schema for the target API. The Responses API takes
+    a flat shape ({type, name, description, parameters}); chat.completions
+    nests the function under a `function` key."""
+    parameters = {
+        "type": "object",
+        "properties": {"ticker": {"type": "string", "description": "US-listed ticker symbol"}},
+        "required": ["ticker"],
     }
+    if api == "chat":
+        return {"type": "function", "function": {
+            "name": name, "description": description, "parameters": parameters,
+        }}
+    return {"type": "function", "name": name, "description": description, "parameters": parameters}
 
 
 _TOOLS = (
@@ -191,13 +194,14 @@ _TOOLS = (
 )
 
 
-def build_toolset(ticker=None):
-    """Return (schemas, registry) to drop into run_agent_loop: the Responses-API
-    function-tool schemas and a name->callable registry of observed tools.
+def build_toolset(ticker=None, api="responses"):
+    """Return (schemas, registry) to drop into the agent loop: function-tool
+    schemas shaped for the target API (``"responses"`` or ``"chat"``) and a
+    name->callable registry of observed tools (API-agnostic).
 
     Pass ``ticker`` (the company under analysis) to pin every tool to it so a
     model-supplied mismatching/hallucinated symbol is rejected instead of
     returning another company's data."""
-    schemas = [_schema(name, desc) for name, _fn, desc in _TOOLS]
+    schemas = [_schema(name, desc, api=api) for name, _fn, desc in _TOOLS]
     registry = {name: _observed_tool(name, fn, ticker) for name, fn, _desc in _TOOLS}
     return schemas, registry

@@ -12,7 +12,7 @@ from .prompts import SYSTEM_PROMPT, user_prompt
 from .observability import get_host, emit_log
 from .finance import Snapshot, fetch_snapshot
 from . import metrics
-from .agent_loop import run_agent_loop
+from .agent_loop import run_agent_loop, run_chat_completions_loop
 from .tools import build_toolset
 
 logger = logging.getLogger(__name__)
@@ -199,14 +199,25 @@ class OpenAIClient:
                     span.set_attribute("llm.tools_used", ",".join(loop.tools_used))
                     tools_ran = bool(loop.tools_used)
                 else:
-                    resp = self._client.chat.completions.create(model=self._model, messages=messages)
-                    choice = resp.choices[0]
-                    text = choice.message.content
-                    finish_reason = choice.finish_reason
-                    usage = getattr(resp, "usage", None)
-                    tin = getattr(usage, "prompt_tokens", 0) if usage else 0
-                    tout = getattr(usage, "completion_tokens", 0) if usage else 0
-                    tools_ran = False
+                    def _create(messages, tools):
+                        kw = {"model": self._model, "messages": messages}
+                        if tools:
+                            kw["tools"] = tools
+                        return self._client.chat.completions.create(**kw)
+                    # Custom function tools only — the hosted `web_search` tool
+                    # is Responses-API-specific and has no chat.completions
+                    # equivalent on providers we target here (Anthropic OpenAI
+                    # compat, Ollama, vLLM, LiteLLM, OpenRouter, Azure).
+                    _schemas, _registry = build_toolset(ticker, api="chat")
+                    loop = run_chat_completions_loop(
+                        _create, messages, tools=_schemas,
+                        function_registry=_registry, max_iters=MAX_ITERS, timeout_s=LOOP_TIMEOUT_S,
+                    )
+                    text, tin, tout = loop.text, loop.tokens_in, loop.tokens_out
+                    finish_reason = "budget_exhausted" if loop.budget_exhausted else "stop"
+                    span.set_attribute("llm.iterations", loop.iterations)
+                    span.set_attribute("llm.tools_used", ",".join(loop.tools_used))
+                    tools_ran = bool(loop.tools_used)
 
                 span.set_attribute("tokens_in", tin)
                 span.set_attribute("tokens_out", tout)

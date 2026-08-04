@@ -106,7 +106,11 @@ def _fake_responses_resp(text: str):
 
 def _fake_chat_resp(text: str):
     resp = MagicMock()
-    resp.choices = [MagicMock(message=MagicMock(content=text), finish_reason="stop")]
+    # tool_calls MUST be set explicitly to None — otherwise MagicMock auto-
+    # returns a truthy child mock and the loop would try to iterate it.
+    resp.choices = [MagicMock(
+        message=MagicMock(content=text, tool_calls=None), finish_reason="stop",
+    )]
     resp.usage = MagicMock(prompt_tokens=10, completion_tokens=20)
     return resp
 
@@ -135,21 +139,32 @@ def test_client_uses_chat_completions_when_flag_false(monkeypatch):
         assert result.recommendation == "buy"
         instance.chat.completions.create.assert_called_once()
         instance.responses.create.assert_not_called()
-        # chat.completions path must NOT pass the OpenAI hosted web_search tool.
+        # Chat.completions path wires the custom function tools but must NOT
+        # pass the Responses-only hosted web_search tool.
         call_kwargs = instance.chat.completions.create.call_args.kwargs
-        assert "tools" not in call_kwargs
+        tools_passed = call_kwargs.get("tools") or []
+        assert not any(isinstance(t, dict) and t.get("type") == "web_search" for t in tools_passed)
+        tool_names = {
+            t["function"]["name"] for t in tools_passed
+            if isinstance(t, dict) and isinstance(t.get("function"), dict)
+        }
+        assert {"get_financials", "get_valuation", "get_earnings"} <= tool_names
 
 
 def _empty_chat_resp():
     resp = MagicMock()
-    resp.choices = [MagicMock(message=MagicMock(content=""), finish_reason="stop")]
+    resp.choices = [MagicMock(
+        message=MagicMock(content="", tool_calls=None), finish_reason="stop",
+    )]
     resp.usage = MagicMock(prompt_tokens=0, completion_tokens=0)
     return resp
 
 
 def _none_chat_resp():
     resp = MagicMock()
-    resp.choices = [MagicMock(message=MagicMock(content=None), finish_reason="stop")]
+    resp.choices = [MagicMock(
+        message=MagicMock(content=None, tool_calls=None), finish_reason="stop",
+    )]
     resp.usage = None
     return resp
 
@@ -320,7 +335,9 @@ def test_analyze_chat_completions_fallback_is_snapshot_only(monkeypatch):
 
     from unittest.mock import MagicMock
     resp = MagicMock()
-    resp.choices = [MagicMock(message=MagicMock(content=_THESIS_JSON), finish_reason="stop")]
+    resp.choices = [MagicMock(
+        message=MagicMock(content=_THESIS_JSON, tool_calls=None), finish_reason="stop",
+    )]
     resp.usage = MagicMock(prompt_tokens=50, completion_tokens=25)
     fake = MagicMock()
     fake.chat.completions.create.return_value = resp
@@ -347,7 +364,9 @@ def test_chat_completions_branch_emits_tokens_and_call(monkeypatch):
         def create(self, **kw):
             from unittest.mock import MagicMock
             resp = MagicMock()
-            resp.choices = [MagicMock(message=MagicMock(content=_THESIS_JSON), finish_reason="stop")]
+            resp.choices = [MagicMock(
+                message=MagicMock(content=_THESIS_JSON, tool_calls=None), finish_reason="stop",
+            )]
             resp.usage = MagicMock(prompt_tokens=50, completion_tokens=25)
             return resp
 
@@ -496,3 +515,78 @@ def test_analyze_passes_data_tools_and_web_search(monkeypatch):
     # the actual dispatch table (function_registry) is wired — not just schemas
     assert set(captured_registry.keys()) == {"get_financials", "get_valuation", "get_earnings"}
     assert all(callable(fn) for fn in captured_registry.values())
+
+
+def test_analyze_chat_completions_passes_data_tools_no_web_search(monkeypatch):
+    """chat.completions path wires the three custom function tools + registry
+    but does NOT pass the Responses-only hosted web_search tool."""
+    import importlib, lib.metrics as mtr, lib.llm as llm
+    importlib.reload(mtr)
+    monkeypatch.setattr(mtr, "record_llm_tokens", lambda *a, **k: None)
+    monkeypatch.setattr(mtr, "record_llm_call", lambda *a, **k: None)
+    monkeypatch.setattr(mtr, "record_llm_duration", lambda *a, **k: None)
+    importlib.reload(llm)
+
+    from types import SimpleNamespace
+
+    captured = {}
+
+    def _spy_run_chat_loop(*args, **kwargs):
+        captured["tools"] = kwargs.get("tools")
+        captured["registry"] = kwargs.get("function_registry")
+        return SimpleNamespace(
+            text=_THESIS_JSON, tokens_in=1, tokens_out=1,
+            iterations=1, tools_used=[], budget_exhausted=False,
+        )
+
+    monkeypatch.setattr(llm, "run_chat_completions_loop", _spy_run_chat_loop)
+
+    client = llm.OpenAIClient.__new__(llm.OpenAIClient)
+    client._client = SimpleNamespace()  # chat.completions won't be called; spy intercepts
+    client._model = "claude-3-5-sonnet-latest"
+    client._use_responses_api = False
+
+    client.analyze("AAPL")
+
+    captured_tools = captured["tools"] or []
+    captured_registry = captured["registry"] or {}
+
+    # web_search is Responses-only and must NOT reach chat.completions
+    assert not any(isinstance(t, dict) and t.get("type") == "web_search" for t in captured_tools)
+
+    # Schemas use the chat.completions nested-`function` shape
+    tool_names = {
+        t["function"]["name"] for t in captured_tools
+        if isinstance(t, dict) and isinstance(t.get("function"), dict)
+    }
+    assert {"get_financials", "get_valuation", "get_earnings"} <= tool_names
+
+    # Registry is wired for actual dispatch (not just schemas advertised).
+    assert set(captured_registry.keys()) == {"get_financials", "get_valuation", "get_earnings"}
+    assert all(callable(fn) for fn in captured_registry.values())
+
+
+def test_chat_completions_grounding_researched_when_tool_and_citation(monkeypatch):
+    """When the chat-completions loop reports a custom tool ran and the thesis
+    contains at least one source_url, engine grounding is 'researched'."""
+    import importlib, lib.metrics as mtr, lib.llm as llm
+    importlib.reload(mtr)
+    monkeypatch.setattr(mtr, "record_llm_tokens", lambda *a, **k: None)
+    monkeypatch.setattr(mtr, "record_llm_call", lambda *a, **k: None)
+    monkeypatch.setattr(mtr, "record_llm_duration", lambda *a, **k: None)
+    importlib.reload(llm)
+
+    from types import SimpleNamespace
+    monkeypatch.setattr(llm, "run_chat_completions_loop", lambda *a, **k: SimpleNamespace(
+        text=_THESIS_JSON, tokens_in=1, tokens_out=1,
+        iterations=2, tools_used=["get_financials"], budget_exhausted=False,
+    ))
+
+    client = llm.OpenAIClient.__new__(llm.OpenAIClient)
+    client._client = SimpleNamespace()
+    client._model = "claude-3-5-sonnet-latest"
+    client._use_responses_api = False
+
+    t = client.analyze("AAPL")
+    # _THESIS_JSON has a source_url on the bull_case → tools ran + citation → researched
+    assert t.grounding == "researched"
