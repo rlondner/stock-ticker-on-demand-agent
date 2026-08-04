@@ -31,7 +31,11 @@ EXPECTED_ENV_VARS = (
     "DD_ENV",
     "DD_TRACE_ENABLED",
     "DD_EXPORTER",
-    "DD_OTLP_ENDPOINT",
+    "OTEL_EXPORTER_OTLP_ENDPOINT",
+    "OTEL_EXPORTER_OTLP_HEADERS",
+    "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+    "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+    "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
     "AGENT_SOURCE",
 )
 
@@ -78,6 +82,7 @@ def main() -> None:
             span.set_attribute("final_status", final_status)
             _metrics.record_job_completed(final_status, ticker)
             _metrics.record_agent_run_duration(final_status, ticker, duration_ms)
+            duration_ms = (time.perf_counter() - started_at) * 1000
             emit_log(
                 "info",
                 "agent.finished",

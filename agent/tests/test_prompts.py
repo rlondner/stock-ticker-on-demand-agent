@@ -1,4 +1,4 @@
-from lib.finance import Snapshot
+from lib.finance import AnalystDistribution, Snapshot
 from lib.prompts import SYSTEM_PROMPT, user_prompt
 
 
@@ -24,9 +24,11 @@ def _snap(**overrides) -> Snapshot:
     return Snapshot(**base)
 
 
-def test_system_prompt_does_not_mention_web_search():
-    assert "web_search" not in SYSTEM_PROMPT
-    assert "web search" not in SYSTEM_PROMPT.lower()
+def test_system_prompt_uses_web_search_and_thesis_schema():
+    assert "web_search" in SYSTEM_PROMPT
+    assert "bull_case" in SYSTEM_PROMPT
+    assert "bear_case" in SYSTEM_PROMPT
+    assert "key_risks" in SYSTEM_PROMPT
 
 
 def test_system_prompt_allows_null_sources():
@@ -59,7 +61,7 @@ def test_user_prompt_without_snapshot_uses_fallback():
     # No prices/company names invented into the fallback.
     assert "342.15" not in p
     assert "MongoDB" not in p
-    # Signal the model that data is missing.
+    # Indicate to the model that data is missing.
     assert "unavailable" in p.lower() or "no live facts" in p.lower()
 
 
@@ -70,6 +72,22 @@ def test_user_prompt_ends_with_json_only_instruction():
     assert p_without.strip().endswith("Output JSON only.")
 
 
+def test_user_prompt_includes_analyst_ratings_when_distribution_present():
+    dist = AnalystDistribution(strong_buy=12, buy=8, hold=5, sell=1, strong_sell=0)
+    p = user_prompt("MDB", snapshot=_snap(analyst_distribution=dist))
+    assert "Analyst ratings:" in p
+    assert "12 strong buy" in p
+    assert "8 buy" in p
+    assert "5 hold" in p
+    assert "1 sell" in p
+    assert "0 strong sell" in p
+
+
+def test_user_prompt_omits_analyst_ratings_when_no_distribution():
+    p = user_prompt("MDB", snapshot=_snap(analyst_distribution=None))
+    assert "Analyst ratings:" not in p
+
+
 def test_user_prompt_skips_none_fields():
     # sector missing → no "Sector:" line at all (not "Sector: None").
     snap = _snap(sector=None, market_cap=None)
@@ -77,3 +95,8 @@ def test_user_prompt_skips_none_fields():
     assert "Sector:" not in p
     assert "None" not in p
     assert "Market cap" not in p
+
+
+def test_system_prompt_names_the_data_tools():
+    for name in ("get_financials", "get_valuation", "get_earnings"):
+        assert name in SYSTEM_PROMPT

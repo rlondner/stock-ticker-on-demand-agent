@@ -65,7 +65,6 @@ def test_no_metric_carries_job_id():
     m.record_llm_tokens("gpt-4.1-mini", "responses", 10, 5, "AAPL")
     m.record_llm_call("gpt-4.1-mini", "responses", "ok", "AAPL")
     m.record_llm_empty_response("gpt-4.1-mini", "responses", "AAPL")
-    m.record_llm_web_search("responses", "AAPL")
     m.record_http_request("api.openai.com", 200, 12.5, "AAPL")
     data = reader.get_metrics_data()
     for rm in data.resource_metrics:
@@ -88,6 +87,115 @@ def test_http_hook_records_request(monkeypatch):
     assert points[0].value == 1
     assert points[0].attributes["host"] == "api.openai.com"
     assert points[0].attributes["status_code"] == 200
+
+
+def test_metrics_otlp_reader_added_when_resolver_returns(monkeypatch):
+    import importlib, lib.metrics as m
+    from opentelemetry.sdk.resources import Resource
+    from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+    importlib.reload(m)
+    monkeypatch.setattr(m, "resolve_otlp_target",
+                        lambda signal: ("https://otlp.example/v1/metrics", {"dd-api-key": "k"}) if signal == "metrics" else None)
+    m.init_metrics(Resource.create({"service.name": "test"}))
+    # A periodic OTLP reader should have been constructed and attached.
+    assert m._meter is not None
+    readers = list(m._meter_provider._metric_readers)
+    assert any(isinstance(r, PeriodicExportingMetricReader) for r in readers), (
+        f"Expected a PeriodicExportingMetricReader to be attached, got: {readers}"
+    )
+
+
+def test_no_otlp_reader_when_resolver_returns_none(monkeypatch):
+    import importlib, lib.metrics as m
+    from opentelemetry.sdk.resources import Resource
+    from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+    importlib.reload(m)
+    monkeypatch.setattr(m, "resolve_otlp_target", lambda signal: None)
+    m.init_metrics(Resource.create({"service.name": "test"}))
+    readers = list(m._meter_provider._metric_readers)
+    assert not any(isinstance(r, PeriodicExportingMetricReader) for r in readers), (
+        f"Expected no PeriodicExportingMetricReader when resolver returns None, got: {readers}"
+    )
+
+
+def test_record_llm_duration_histogram(monkeypatch):
+    import importlib, lib.metrics as m
+    from opentelemetry.sdk.resources import Resource
+    from opentelemetry.sdk.metrics.export import InMemoryMetricReader
+    importlib.reload(m)
+    reader = InMemoryMetricReader()
+    m.init_metrics(Resource.create({"service.name": "test"}), extra_readers=[reader])
+    m.record_llm_duration("gpt-4.1-mini", "responses", 512.0, "AAPL")
+    points = []
+    for rm in reader.get_metrics_data().resource_metrics:
+        for sm in rm.scope_metrics:
+            for metric in sm.metrics:
+                if metric.name == "llm.duration_ms":
+                    points.extend(metric.data.data_points)
+    assert points[0].sum == 512.0
+    assert points[0].attributes == {"model": "gpt-4.1-mini", "api": "responses", "ticker": "AAPL"}
+    assert "job_id" not in points[0].attributes
+
+
+def _snapshot_points(reader, name):
+    out = []
+    for rm in reader.get_metrics_data().resource_metrics:
+        for sm in rm.scope_metrics:
+            for metric in sm.metrics:
+                if metric.name == name:
+                    out.extend(metric.data.data_points)
+    return out
+
+
+def test_record_snapshot_fetch_emits_counter_and_duration():
+    import importlib, lib.metrics as m
+    from opentelemetry.sdk.resources import Resource
+    from opentelemetry.sdk.metrics.export import InMemoryMetricReader
+    importlib.reload(m)
+    reader = InMemoryMetricReader()
+    m.init_metrics(Resource.create({"service.name": "test"}), extra_readers=[reader])
+    m.record_snapshot_fetch("success", "AAPL", 250.0)
+    c = _snapshot_points(reader, "agent.snapshot.fetch")
+    d = _snapshot_points(reader, "agent.snapshot.fetch.duration_ms")
+    assert c[0].value == 1
+    assert c[0].attributes == {"outcome": "success", "ticker": "AAPL"}
+    assert d[0].sum == 250.0
+    assert d[0].attributes == {"outcome": "success", "ticker": "AAPL"}
+
+
+def test_record_snapshot_backfilled_field_missing_completeness():
+    import importlib, lib.metrics as m
+    from opentelemetry.sdk.resources import Resource
+    from opentelemetry.sdk.metrics.export import InMemoryMetricReader
+    importlib.reload(m)
+    reader = InMemoryMetricReader()
+    m.init_metrics(Resource.create({"service.name": "test"}), extra_readers=[reader])
+    m.record_snapshot_backfilled("AAPL")
+    m.record_snapshot_field_missing("market_cap", "AAPL")
+    m.record_snapshot_completeness(11, "AAPL")
+    assert _snapshot_points(reader, "agent.snapshot.backfilled")[0].attributes == {"ticker": "AAPL"}
+    fm = _snapshot_points(reader, "agent.snapshot.field_missing")[0]
+    assert fm.value == 1 and fm.attributes == {"field": "market_cap", "ticker": "AAPL"}
+    comp = _snapshot_points(reader, "agent.snapshot.completeness")[0]
+    assert comp.sum == 11 and comp.attributes == {"ticker": "AAPL"}
+
+
+def test_snapshot_metrics_never_carry_job_id():
+    import importlib, lib.metrics as m
+    from opentelemetry.sdk.resources import Resource
+    from opentelemetry.sdk.metrics.export import InMemoryMetricReader
+    importlib.reload(m)
+    reader = InMemoryMetricReader()
+    m.init_metrics(Resource.create({"service.name": "test"}), extra_readers=[reader])
+    m.record_snapshot_fetch("success", "AAPL", 1.0)
+    m.record_snapshot_backfilled("AAPL")
+    m.record_snapshot_field_missing("close", "AAPL")
+    m.record_snapshot_completeness(5, "AAPL")
+    for rm in reader.get_metrics_data().resource_metrics:
+        for sm in rm.scope_metrics:
+            for metric in sm.metrics:
+                for pt in metric.data.data_points:
+                    assert "job_id" not in pt.attributes, metric.name
 
 
 def test_sentry_mirror_calls_count_with_attributes(monkeypatch):

@@ -7,13 +7,15 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.trace.status import Status, StatusCode
+from .otlp_target import resolve_otlp_target
 
 _stdlib_logger = logging.getLogger("stock-agent")
 
 _initialized = False
 _sentry_inited = False
 _dd_inited = False
-_dd_otlp_inited = False
+_otlp_traces_inited = False
+_logger_provider = None
 
 
 def get_host() -> str:
@@ -25,7 +27,7 @@ def get_host() -> str:
 def init_observability(job_id: str) -> None:
     """Initialize OTel and any configured exporters (Sentry/Datadog).
     Idempotent - safe to call multiple times."""
-    global _initialized, _sentry_inited, _dd_inited, _dd_otlp_inited
+    global _initialized, _sentry_inited, _dd_inited, _otlp_traces_inited
     if _initialized:
         return
 
@@ -67,48 +69,61 @@ def init_observability(job_id: str) -> None:
         global _sentry_inited
         _sentry_inited = True
 
-    # === Datadog exporter ===
+    # === Datadog / OTLP trace exporter ===
     # DD_EXPORTER picks how traces reach Datadog:
-    #   'agent' (default): ddtrace.patch_all → ships to a local Datadog Agent on
+    #   'agent' (opt-in): ddtrace.patch_all → ships to a local Datadog Agent on
     #     localhost:8126. Auto-instruments httpx/psycopg/openai/logging. Requires
-    #     an Agent reachable from this process. Set DD_TRACE_ENABLED=false to
-    #     short-circuit when no Agent is running.
-    #   'otlp': OTLP-HTTP exporter ships spans directly to Datadog's intake.
-    #     No Agent needed (good for Daytona sandboxes). Only the explicit OTel
-    #     spans we create get shipped — no auto-instrumented HTTP/DB/OpenAI spans.
-    #     Requires DD_OTLP_ENDPOINT (the exact intake URL from Datadog's docs)
-    #     and DD_API_KEY.
-    dd_key = os.environ.get("DD_API_KEY")
+    #     DD_API_KEY and an Agent reachable from this process. Set
+    #     DD_TRACE_ENABLED=false to short-circuit when no Agent is running.
+    #   'otlp' (default): OTLP-HTTP exporter driven by resolve_otlp_target("traces").
+    #     No Agent needed (good for Daytona sandboxes). OTel-native auto-instrumentation
+    #     (httpx/psycopg/openai) is activated when available.
     dd_disabled = os.environ.get("DD_TRACE_ENABLED", "").strip().lower() == "false"
-    dd_exporter = (os.environ.get("DD_EXPORTER") or "agent").strip().lower()
+    dd_exporter = (os.environ.get("DD_EXPORTER") or "otlp").strip().lower()
     if dd_exporter not in ("agent", "otlp"):
         raise ValueError(
             f"DD_EXPORTER={dd_exporter!r} is not valid; expected 'agent' or 'otlp'"
         )
-    if dd_key and not dd_disabled:
-        if dd_exporter == "agent":
-            import ddtrace
-            ddtrace.config.service = os.environ.get("DD_SERVICE", "stock-agent")
-            ddtrace.config.env = os.environ.get("DD_ENV", "development")
-            os.environ.setdefault("DD_TRACE_OTEL_ENABLED", "true")
-            ddtrace.patch_all(httpx=True, psycopg=True, openai=True, logging=True)
-            global _dd_inited
-            _dd_inited = True
-        else:  # dd_exporter == "otlp"
-            otlp_endpoint = os.environ.get("DD_OTLP_ENDPOINT")
-            if not otlp_endpoint:
-                raise ValueError(
-                    "DD_EXPORTER=otlp requires DD_OTLP_ENDPOINT to be set to "
-                    "Datadog's OTLP HTTP intake URL (see your Datadog docs; "
-                    "the path has shifted across Datadog versions)"
-                )
+    if dd_exporter == "agent" and os.environ.get("DD_API_KEY") and not dd_disabled:
+        import ddtrace
+        ddtrace.config.service = os.environ.get("DD_SERVICE", "stock-agent")
+        ddtrace.config.env = os.environ.get("DD_ENV", "development")
+        os.environ.setdefault("DD_TRACE_OTEL_ENABLED", "true")
+        ddtrace.patch_all(httpx=True, psycopg=True, openai=True, logging=True)
+        global _dd_inited
+        _dd_inited = True
+    else:
+        # Intentional OTLP-default path: covers both dd_exporter=="otlp" and the
+        # degenerate agent-mode case (missing DD_API_KEY or DD_TRACE_ENABLED=false).
+        # resolve_otlp_target returns None when unconfigured → no exporter installed,
+        # but _install_trace_instrumentors() still runs harmlessly.
+        _trace_target = resolve_otlp_target("traces")
+        if _trace_target is not None:
+            endpoint, headers = _trace_target
             from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
             provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(
-                endpoint=otlp_endpoint,
-                headers={"DD-API-KEY": dd_key},
+                endpoint=endpoint, headers=headers,
             )))
-            global _dd_otlp_inited
-            _dd_otlp_inited = True
+            global _otlp_traces_inited
+            _otlp_traces_inited = True
+        _install_trace_instrumentors()
+
+    # Logs: OTel LoggerProvider bridged from stdlib; OTLP export via resolver.
+    try:
+        from opentelemetry.sdk._logs import LoggerProvider
+        from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
+        global _logger_provider
+        _logger_provider = LoggerProvider(resource=resource)
+        _log_target = resolve_otlp_target("logs")
+        if _log_target is not None:
+            endpoint, headers = _log_target
+            from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
+            _logger_provider.add_log_record_processor(BatchLogRecordProcessor(
+                OTLPLogExporter(endpoint=endpoint, headers=headers),
+            ))
+        _install_log_bridge(_logger_provider)
+    except Exception:
+        pass
 
     # Continue the W3C trace from the parent (NextJS) if TRACEPARENT was passed.
     traceparent = os.environ.get("TRACEPARENT")
@@ -147,26 +162,20 @@ def _dd_common_tags() -> list[str]:
     return tags
 
 
-# DD reserved top-level keys — user attributes must not overwrite them.
-_DD_RESERVED_LOG_KEYS = frozenset({"ddsource", "service", "hostname", "status", "message", "ddtags"})
-
-
-def _post_dd(url: str, payload) -> None:
-    """Synchronous POST body used by the background dispatcher below. Errors are
-    swallowed — the agent self-deletes and we don't queue or retry."""
-    try:
-        import httpx
-        httpx.post(
-            url,
-            headers={
-                "DD-API-KEY": os.environ["DD_API_KEY"],
-                "Content-Type": "application/json",
-            },
-            json=payload,
-            timeout=3,
-        )
-    except Exception:
-        pass
+def _install_trace_instrumentors() -> None:
+    """Activate OTel-native auto-instrumentation for outbound HTTP, Postgres, and
+    OpenAI against the current TracerProvider (used in OTLP mode, where ddtrace's
+    patch_all is not active). Each is guarded independently."""
+    for mod_path, cls_name in (
+        ("opentelemetry.instrumentation.httpx", "HTTPXClientInstrumentor"),
+        ("opentelemetry.instrumentation.psycopg", "PsycopgInstrumentor"),
+        ("opentelemetry.instrumentation.openai", "OpenAIInstrumentor"),
+    ):
+        try:
+            mod = __import__(mod_path, fromlist=[cls_name])
+            getattr(mod, cls_name)().instrument()
+        except Exception:
+            pass
 
 
 def _dispatch_dd(url: str, payload) -> None:
@@ -195,30 +204,22 @@ def _datadog_log(level: str, message: str, attributes: dict) -> None:
     _dispatch_dd(f"https://http-intake.logs.{_dd_site()}/api/v2/logs", [payload])
 
 
-def _datadog_metric(name: str, value: float, tags: list[str] | None = None) -> None:
-    """Fire-and-forget POST to Datadog's HTTP metrics intake as a gauge point.
-    Uses the modern v2/series shape (type 3 = gauge). Dispatched on a daemon
-    thread so the caller returns immediately."""
-    if not _dd_enabled():
-        return
-    import time as _time
-    merged_tags = _dd_common_tags() + (tags or [])
-    payload = {
-        "series": [{
-            "metric": name,
-            "type": 3,
-            "points": [{"timestamp": int(_time.time()), "value": float(value)}],
-            "tags": merged_tags,
-            "resources": [{"type": "host", "name": get_host()}],
-        }],
-    }
-    _dispatch_dd(f"https://api.{_dd_site()}/api/v2/series", payload)
+def _install_log_bridge(logger_provider) -> None:
+    """Route stdlib logs emitted through `_stdlib_logger` into an OTel
+    LoggerProvider so they reach the OTLP log exporter. Idempotent."""
+    from opentelemetry.sdk._logs import LoggingHandler
+    for h in list(_stdlib_logger.handlers):
+        if isinstance(h, LoggingHandler):
+            return
+    handler = LoggingHandler(level=logging.DEBUG, logger_provider=logger_provider)
+    _stdlib_logger.addHandler(handler)
+    _stdlib_logger.setLevel(logging.DEBUG)
 
 
 def emit_log(level: str, message: str, **attributes) -> None:
     """Emit a structured log to stdlib (always), Sentry Logs (when
-    SENTRY_DSN_AGENT is set), and Datadog HTTP log intake (when DD_API_KEY
-    is set and DD_TRACE_ENABLED != 'false').
+    SENTRY_DSN_AGENT is set), and the OTel LoggerProvider (which exports via
+    OTLP when a logs target is configured).
 
     Every log carries the dynamic OS hostname so origin is visible in each
     backend's UI without joining to trace tags.
@@ -242,22 +243,6 @@ def emit_log(level: str, message: str, **attributes) -> None:
         except Exception:
             pass
 
-    _datadog_log(level, message, attributes)
-
-
-def emit_metric(name: str, value: float, **tags) -> None:
-    """Emit a numeric metric to Datadog (via HTTP intake) AND to the current
-    OTel span as an attribute (Sentry surfaces span attributes in Trace
-    Explorer; Sentry sunset its custom-metrics product in Oct 2024, so span
-    attributes are the endorsed replacement).
-
-    tags: keyword args become 'key:value' Datadog tags."""
-    span = trace.get_current_span()
-    if span and span.is_recording():
-        span.set_attribute(name, value)
-
-    _datadog_metric(name, value, tags=[f"{k}:{v}" for k, v in tags.items()])
-
 
 # Backward-compat alias for existing callers.
 sentry_log = emit_log
@@ -276,6 +261,12 @@ def flush_observability(timeout_s: float = 5.0) -> None:
         flush_metrics(timeout_s=timeout_s)
     except Exception:
         pass
+
+    if _logger_provider is not None:
+        try:
+            _logger_provider.force_flush(timeout_millis=int(timeout_s * 1000))
+        except Exception:
+            pass
 
     if _sentry_inited:
         try:

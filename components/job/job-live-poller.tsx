@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { StockHeader } from "./stock-header";
-import { KeyInsights } from "./key-insights";
+import { InvestmentThesis } from "./investment-thesis";
 import { RawLLMResponse } from "./raw-llm-response";
 import { AnalystSentiment } from "./analyst-sentiment";
 import { formatCompactDate } from "@/lib/ui/format-timestamp";
@@ -73,10 +73,10 @@ export function JobLivePoller({ initialJob }: { initialJob: SerializedJob }) {
 
       {job.status === "complete" && (
         <>
-          <KeyInsights signals={job.result?.signals ?? null} lastUpdatedLabel={lastUpdatedLabel} />
+          <InvestmentThesis result={job.result ?? null} lastUpdatedLabel={lastUpdatedLabel} />
           <section className="grid grid-cols-12 gap-6">
             <RawLLMResponse result={job.result} />
-            <AnalystSentiment />
+            <AnalystSentiment snapshot={job.result?.snapshot ?? null} />
           </section>
         </>
       )}

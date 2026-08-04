@@ -6,12 +6,14 @@ import time
 from typing import Protocol
 from pydantic import BaseModel, Field
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
-from openai import OpenAI, APIError, RateLimitError, APIConnectionError, InternalServerError
+from openai import OpenAI, RateLimitError, APIConnectionError, InternalServerError
 from opentelemetry import trace
 from .prompts import SYSTEM_PROMPT, user_prompt
-from .observability import get_host, emit_metric, emit_log
+from .observability import get_host, emit_log
 from .finance import Snapshot, fetch_snapshot
 from . import metrics
+from .agent_loop import run_agent_loop
+from .tools import build_toolset
 
 logger = logging.getLogger(__name__)
 
@@ -21,23 +23,28 @@ class EmptyLLMResponseError(Exception):
     server-managed bots and small local models produce this ~1-in-10 times
     with finish_reason='stop' and no error status."""
 
-class Signal(BaseModel):
-    label: str
+class ThesisPoint(BaseModel):
+    claim: str
     evidence: str
-    source: str | None = None
+    source_url: str | None = None
 
-class Analysis(BaseModel):
+class Thesis(BaseModel):
     recommendation: str = Field(pattern="^(buy|hold|sell)$")
+    confidence: str = Field(pattern="^(low|medium|high)$")
     summary: str
-    signals: list[Signal]
+    bull_case: list[ThesisPoint]
+    bear_case: list[ThesisPoint]
+    key_risks: list[ThesisPoint]
+    # Set by the engine (not the model): overridden after parse. Default keeps
+    # parsing valid when the model omits it (which it should).
+    grounding: str = Field(default="snapshot_only", pattern="^(researched|limited|snapshot_only)$")
 
 class LLMClient(Protocol):
-    def analyze(self, ticker: str) -> Analysis: ...
+    def analyze(self, ticker: str) -> Thesis: ...
 
-def parse_response(raw: str) -> Analysis:
-    """Strip optional markdown fences, parse JSON, validate."""
+def parse_thesis(raw: str) -> Thesis:
+    """Strip optional markdown fences, parse JSON, validate against Thesis."""
     cleaned = raw.strip()
-    # Strip ```json\n...\n``` or ```\n...\n``` fences.
     fenced = re.match(r"^```(?:json)?\s*\n?(.*?)\n?```$", cleaned, re.DOTALL)
     if fenced:
         cleaned = fenced.group(1).strip()
@@ -49,9 +56,11 @@ def parse_response(raw: str) -> Analysis:
             f"LLM did not return valid JSON ({e}); "
             f"raw_length={len(raw)}, snippet={snippet!r}"
         ) from e
-    return Analysis(**data)
+    return Thesis(**data)
 
 DEFAULT_MODEL = "gpt-4.1-mini"
+MAX_ITERS = int(os.environ.get("AGENT_MAX_ITERS", "6"))
+LOOP_TIMEOUT_S = float(os.environ.get("AGENT_LOOP_TIMEOUT_S", "90"))
 
 # Chars kept on the span attribute / log payload. Well under Sentry's ~8KB
 # per-attribute cap and Datadog's log-line cap. If the model returns more,
@@ -70,18 +79,23 @@ def _record_raw_response(span, text: str, finish_reason: str | None) -> None:
         span.set_attribute("llm.finish_reason", str(finish_reason))
 
 
-def _record_parsed_response(span, analysis: "Analysis") -> None:
-    """Attach the parsed structure to the span + emit a log so recommendations
-    are queryable across all three backends without parsing raw text."""
-    span.set_attribute("llm.response.recommendation", analysis.recommendation)
-    span.set_attribute("llm.response.summary", analysis.summary[:_LLM_SUMMARY_TRACE_MAX])
-    span.set_attribute("llm.response.signals_count", len(analysis.signals))
+def _record_parsed_response(span, thesis: "Thesis") -> None:
+    """Attach the parsed thesis to the span and emit a structured log so
+    recommendations are queryable across all backends without parsing raw text."""
+    span.set_attribute("llm.response.recommendation", thesis.recommendation)
+    span.set_attribute("llm.response.confidence", thesis.confidence)
+    span.set_attribute("llm.response.grounding", thesis.grounding)
+    span.set_attribute("llm.response.summary", thesis.summary[:_LLM_SUMMARY_TRACE_MAX])
+    span.set_attribute("llm.response.bull_count", len(thesis.bull_case))
+    span.set_attribute("llm.response.bear_count", len(thesis.bear_case))
+    span.set_attribute("llm.response.risk_count", len(thesis.key_risks))
     emit_log(
         "info",
         "llm.responded",
-        recommendation=analysis.recommendation,
-        summary=analysis.summary[:_LLM_SUMMARY_TRACE_MAX],
-        signals_count=len(analysis.signals),
+        recommendation=thesis.recommendation,
+        confidence=thesis.confidence,
+        grounding=thesis.grounding,
+        summary=thesis.summary[:_LLM_SUMMARY_TRACE_MAX],
     )
 
 
@@ -117,6 +131,16 @@ def _require_nonempty(text: str | None, *, api: str, finish_reason: str | None, 
     )
 
 
+def _grounding(tools_ran: bool, thesis: "Thesis") -> str:
+    """Engine-authoritative grounding level (never trust the model's self-report)."""
+    if not tools_ran:
+        return "snapshot_only"
+    has_citation = any(
+        p.source_url for section in (thesis.bull_case, thesis.bear_case, thesis.key_risks) for p in section
+    )
+    return "researched" if has_citation else "limited"
+
+
 class OpenAIClient:
     def __init__(self, model: str | None = None):
         self._client = OpenAI(
@@ -142,7 +166,7 @@ class OpenAIClient:
         )),
         reraise=True,
     )
-    def analyze(self, ticker: str, snapshot: Snapshot | None = None) -> Analysis:
+    def analyze(self, ticker: str, snapshot: Snapshot | None = None) -> Thesis:
         metrics.set_current_ticker(ticker)
         tracer = trace.get_tracer("stock-agent")
         api = "responses" if self._use_responses_api else "chat.completions"
@@ -159,63 +183,58 @@ class OpenAIClient:
             tokens_out = 0
             try:
                 if self._use_responses_api:
-                    # We now inject the ticker facts into the user prompt as
-                    # ground truth, so we no longer need the hosted web_search
-                    # tool — and prompts.py explicitly tells the model it has
-                    # no web access.
-                    resp = self._client.responses.create(
-                        model=self._model,
-                        input=messages,
+                    def _create(input, tools):
+                        kw = {"model": self._model, "input": input}
+                        if tools:
+                            kw["tools"] = tools
+                        return self._client.responses.create(**kw)
+                    _schemas, _registry = build_toolset(ticker)
+                    loop = run_agent_loop(
+                        _create, messages, tools=[{"type": "web_search"}, *_schemas],
+                        function_registry=_registry, max_iters=MAX_ITERS, timeout_s=LOOP_TIMEOUT_S,
                     )
-                    text = resp.output_text
-                    finish_reason = getattr(resp, "status", None)
-                    usage = getattr(resp, "usage", None)
-                    if usage:
-                        tokens_in = getattr(usage, "input_tokens", 0)
-                        tokens_out = getattr(usage, "output_tokens", 0)
-                        span.set_attribute("tokens_in", tokens_in)
-                        span.set_attribute("tokens_out", tokens_out)
-                    _require_nonempty(text, api=api, finish_reason=finish_reason, span=span,
-                                      model=self._model, ticker=ticker)
+                    text, tin, tout = loop.text, loop.tokens_in, loop.tokens_out
+                    finish_reason = "budget_exhausted" if loop.budget_exhausted else "stop"
+                    span.set_attribute("llm.iterations", loop.iterations)
+                    span.set_attribute("llm.tools_used", ",".join(loop.tools_used))
+                    tools_ran = bool(loop.tools_used)
                 else:
-                    resp = self._client.chat.completions.create(
-                        model=self._model,
-                        messages=messages,
-                    )
+                    resp = self._client.chat.completions.create(model=self._model, messages=messages)
                     choice = resp.choices[0]
                     text = choice.message.content
                     finish_reason = choice.finish_reason
                     usage = getattr(resp, "usage", None)
-                    if usage:
-                        tokens_in = getattr(usage, "prompt_tokens", 0)
-                        tokens_out = getattr(usage, "completion_tokens", 0)
-                        span.set_attribute("tokens_in", tokens_in)
-                        span.set_attribute("tokens_out", tokens_out)
-                    _require_nonempty(text, api=api, finish_reason=finish_reason, span=span,
-                                      model=self._model, ticker=ticker)
+                    tin = getattr(usage, "prompt_tokens", 0) if usage else 0
+                    tout = getattr(usage, "completion_tokens", 0) if usage else 0
+                    tools_ran = False
+
+                span.set_attribute("tokens_in", tin)
+                span.set_attribute("tokens_out", tout)
+                metrics.record_llm_tokens(self._model, api, tin, tout, ticker)
+                _require_nonempty(text, api=api, finish_reason=finish_reason,
+                                  span=span, model=self._model, ticker=ticker)
 
                 _record_raw_response(span, text, finish_reason)
-                analysis = parse_response(text)
-                _record_parsed_response(span, analysis)
-                metrics.record_llm_tokens(self._model, api, tokens_in, tokens_out, ticker)
+                thesis = parse_thesis(text)
+                thesis = thesis.model_copy(update={"grounding": _grounding(tools_ran, thesis)})
+                _record_parsed_response(span, thesis)
                 metrics.record_llm_call(self._model, api, "ok", ticker)
-                return analysis
+                return thesis
             except Exception:
-                metrics.record_llm_call(self._model, api, "failed", ticker)
+                metrics.record_llm_call(self._model, api, "error", ticker)
                 raise
             finally:
-                emit_metric(
-                    "llm.duration_ms",
+                metrics.record_llm_duration(
+                    self._model, api,
                     (time.perf_counter() - request_started_at) * 1000,
-                    model=self._model,
-                    api=api,
+                    ticker,
                 )
 
 def run_analysis(ticker: str) -> dict:
     snapshot = fetch_snapshot(ticker)
     client: LLMClient = OpenAIClient()
-    analysis = client.analyze(ticker, snapshot=snapshot)
+    thesis = client.analyze(ticker, snapshot=snapshot)
     return {
-        **analysis.model_dump(),
+        **thesis.model_dump(),
         "snapshot": snapshot.model_dump() if snapshot else None,
     }
