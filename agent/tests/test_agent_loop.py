@@ -1,6 +1,8 @@
 import json
 from types import SimpleNamespace
-from lib.agent_loop import run_agent_loop, run_chat_completions_loop, LoopResult
+from lib.agent_loop import (
+    run_agent_loop, run_chat_completions_loop, run_anthropic_loop, LoopResult,
+)
 
 
 def _resp(output_items, text="", tin=0, tout=0):
@@ -189,6 +191,141 @@ def test_chat_loop_budget_cap_stops_and_finalizes():
         create, [], tools=[{"type": "function", "function": {"name": "loop"}}],
         function_registry={"loop": lambda a: {}}, max_iters=3,
     )
+    assert r.iterations == 3
+    assert r.budget_exhausted is True
+    assert r.text == "CAPPED"
+
+
+def _text_block(text):
+    return SimpleNamespace(type="text", text=text)
+
+
+def _tool_use_block(name, input_, tu_id="toolu_1"):
+    return SimpleNamespace(type="tool_use", id=tu_id, name=name, input=input_)
+
+
+def _server_tool_use_block(name="web_search", tu_id="stu_1"):
+    return SimpleNamespace(type="server_tool_use", id=tu_id, name=name, input={"query": "q"})
+
+
+def _anth_resp(content, stop_reason="end_turn", tin=0, tout=0):
+    return SimpleNamespace(
+        content=content, stop_reason=stop_reason,
+        usage=SimpleNamespace(input_tokens=tin, output_tokens=tout),
+    )
+
+
+def test_anthropic_loop_returns_text_when_no_tool_use():
+    def create(system, messages, tools):
+        return _anth_resp([_text_block("FINAL")], stop_reason="end_turn", tin=10, tout=5)
+    r = run_anthropic_loop(create, system="sys",
+                           initial_messages=[{"role": "user", "content": "hi"}],
+                           tools=[{"type": "web_search_20250305", "name": "web_search"}],
+                           function_registry={})
+    assert r.text == "FINAL"
+    assert r.iterations == 1
+    assert r.tools_used == []
+    assert r.tokens_in == 10 and r.tokens_out == 5
+    assert r.budget_exhausted is False
+
+
+def test_anthropic_loop_dispatches_custom_tool_then_finalizes():
+    seen_args = {}
+    def get_x(args):
+        seen_args.update(args)
+        return {"value": 42}
+    responses = [
+        _anth_resp([_tool_use_block("get_x", {"a": 1}, tu_id="toolu_a")],
+                   stop_reason="tool_use", tin=3, tout=1),
+        _anth_resp([_text_block("FINAL")], stop_reason="end_turn", tin=4, tout=2),
+    ]
+    tool_result_messages: list[dict] = []
+    def create(system, messages, tools):
+        for m in messages:
+            if isinstance(m, dict) and m.get("role") == "user" and isinstance(m.get("content"), list):
+                for block in m["content"]:
+                    if isinstance(block, dict) and block.get("type") == "tool_result":
+                        tool_result_messages.append(block)
+        return responses.pop(0)
+    r = run_anthropic_loop(create, system="sys",
+                           initial_messages=[{"role": "user", "content": "hi"}],
+                           tools=[], function_registry={"get_x": get_x})
+    assert seen_args == {"a": 1}
+    assert r.text == "FINAL"
+    assert r.iterations == 2
+    assert r.tools_used == ["get_x"]
+    assert r.tokens_in == 7 and r.tokens_out == 3
+    # tool_result must reference the tool_use.id and encode the return value as JSON
+    assert tool_result_messages and tool_result_messages[0]["tool_use_id"] == "toolu_a"
+    assert json.loads(tool_result_messages[0]["content"]) == {"value": 42}
+
+
+def test_anthropic_loop_counts_web_search_server_tool_without_dispatch():
+    """Server tools like web_search_20250305 run server-side; the loop must
+    still record them in tools_used so grounding can detect research happened."""
+    def create(system, messages, tools):
+        return _anth_resp(
+            [_server_tool_use_block(), _text_block("FINAL")],
+            stop_reason="end_turn",
+        )
+    r = run_anthropic_loop(create, system="sys",
+                           initial_messages=[{"role": "user", "content": "hi"}],
+                           tools=[{"type": "web_search_20250305", "name": "web_search"}],
+                           function_registry={})
+    assert r.text == "FINAL"
+    assert r.tools_used == ["web_search"]
+
+
+def test_anthropic_loop_tool_exception_becomes_error_result_and_continues():
+    def boom(args):
+        raise RuntimeError("nope")
+    responses = [
+        _anth_resp([_tool_use_block("boom", {}, tu_id="toolu_b")], stop_reason="tool_use"),
+        _anth_resp([_text_block("DONE")], stop_reason="end_turn"),
+    ]
+    seen: list[str] = []
+    def create(system, messages, tools):
+        for m in messages:
+            if isinstance(m, dict) and m.get("role") == "user" and isinstance(m.get("content"), list):
+                for block in m["content"]:
+                    if isinstance(block, dict) and block.get("type") == "tool_result":
+                        seen.append(block["content"])
+        return responses.pop(0)
+    r = run_anthropic_loop(create, system="sys",
+                           initial_messages=[], tools=[],
+                           function_registry={"boom": boom})
+    assert r.text == "DONE"
+    assert any("nope" in s for s in seen)
+
+
+def test_anthropic_loop_unknown_tool_returns_error_and_continues():
+    responses = [
+        _anth_resp([_tool_use_block("mystery", {}, tu_id="toolu_m")], stop_reason="tool_use"),
+        _anth_resp([_text_block("DONE")], stop_reason="end_turn"),
+    ]
+    seen: list[str] = []
+    def create(system, messages, tools):
+        for m in messages:
+            if isinstance(m, dict) and m.get("role") == "user" and isinstance(m.get("content"), list):
+                for block in m["content"]:
+                    if isinstance(block, dict) and block.get("type") == "tool_result":
+                        seen.append(block["content"])
+        return responses.pop(0)
+    r = run_anthropic_loop(create, system="sys", initial_messages=[], tools=[],
+                           function_registry={})
+    assert r.text == "DONE"
+    assert any("unknown tool" in s for s in seen)
+
+
+def test_anthropic_loop_budget_cap_stops_and_finalizes():
+    def create(system, messages, tools):
+        if tools:
+            return _anth_resp([_tool_use_block("loop", {}, tu_id="t")], stop_reason="tool_use")
+        return _anth_resp([_text_block("CAPPED")], stop_reason="end_turn")
+    r = run_anthropic_loop(create, system="sys", initial_messages=[],
+                           tools=[{"name": "loop", "description": "d",
+                                   "input_schema": {"type": "object"}}],
+                           function_registry={"loop": lambda a: {}}, max_iters=3)
     assert r.iterations == 3
     assert r.budget_exhausted is True
     assert r.text == "CAPPED"

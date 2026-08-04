@@ -566,6 +566,97 @@ def test_analyze_chat_completions_passes_data_tools_no_web_search(monkeypatch):
     assert all(callable(fn) for fn in captured_registry.values())
 
 
+def test_pick_client_routes_anthropic_key_to_anthropic_client(monkeypatch):
+    """Auto-routing by API-key prefix: sk-ant-* → AnthropicClient, else → OpenAIClient."""
+    import importlib, lib.llm as llm
+    importlib.reload(llm)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-ant-fake")
+    with patch("lib.llm.AnthropicClient") as ant_ctor, patch("lib.llm.OpenAI"):
+        llm._pick_client()
+        ant_ctor.assert_called_once()
+
+
+def test_pick_client_routes_openai_key_to_openai_client(monkeypatch):
+    import importlib, lib.llm as llm
+    importlib.reload(llm)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-proj-fake")
+    with patch("lib.llm.OpenAIClient") as openai_ctor, patch("lib.llm.anthropic"):
+        llm._pick_client()
+        openai_ctor.assert_called_once()
+
+
+def test_anthropic_client_passes_web_search_and_data_tools(monkeypatch):
+    """AnthropicClient wires the three custom function tools + hosted
+    web_search_20250305 server tool into the loop."""
+    import importlib, lib.metrics as mtr, lib.llm as llm
+    importlib.reload(mtr)
+    monkeypatch.setattr(mtr, "record_llm_tokens", lambda *a, **k: None)
+    monkeypatch.setattr(mtr, "record_llm_call", lambda *a, **k: None)
+    monkeypatch.setattr(mtr, "record_llm_duration", lambda *a, **k: None)
+    importlib.reload(llm)
+
+    from types import SimpleNamespace
+    captured = {}
+
+    def _spy_run_anthropic_loop(*args, **kwargs):
+        captured["tools"] = kwargs.get("tools")
+        captured["registry"] = kwargs.get("function_registry")
+        captured["system"] = kwargs.get("system") or (args[1] if len(args) > 1 else None)
+        return SimpleNamespace(
+            text=_THESIS_JSON, tokens_in=1, tokens_out=1,
+            iterations=1, tools_used=[], budget_exhausted=False,
+        )
+
+    monkeypatch.setattr(llm, "run_anthropic_loop", _spy_run_anthropic_loop)
+
+    client = llm.AnthropicClient.__new__(llm.AnthropicClient)
+    client._client = SimpleNamespace()  # loop is spied; SDK call never happens
+    client._model = "claude-3-5-sonnet-latest"
+
+    client.analyze("AAPL")
+
+    captured_tools = captured["tools"] or []
+    # web_search_20250305 server tool is present
+    assert any(
+        isinstance(t, dict) and t.get("type") == "web_search_20250305"
+        for t in captured_tools
+    )
+    # all three function tools present in Anthropic input_schema shape
+    tool_names = {
+        t["name"] for t in captured_tools
+        if isinstance(t, dict) and "input_schema" in t
+    }
+    assert {"get_financials", "get_valuation", "get_earnings"} <= tool_names
+    # registry wires the actual dispatch
+    assert set((captured["registry"] or {}).keys()) == {
+        "get_financials", "get_valuation", "get_earnings",
+    }
+    # System prompt is passed as a separate parameter (Anthropic contract)
+    assert captured["system"] and "equity research analyst" in captured["system"]
+
+
+def test_anthropic_client_grounding_researched_when_tool_and_citation(monkeypatch):
+    """AnthropicClient sets grounding='researched' when loop reports tools ran
+    AND the thesis carries at least one source_url."""
+    import importlib, lib.metrics as mtr, lib.llm as llm
+    importlib.reload(mtr)
+    monkeypatch.setattr(mtr, "record_llm_tokens", lambda *a, **k: None)
+    monkeypatch.setattr(mtr, "record_llm_call", lambda *a, **k: None)
+    monkeypatch.setattr(mtr, "record_llm_duration", lambda *a, **k: None)
+    importlib.reload(llm)
+
+    from types import SimpleNamespace
+    monkeypatch.setattr(llm, "run_anthropic_loop", lambda *a, **k: SimpleNamespace(
+        text=_THESIS_JSON, tokens_in=1, tokens_out=1,
+        iterations=2, tools_used=["web_search", "get_financials"], budget_exhausted=False,
+    ))
+    client = llm.AnthropicClient.__new__(llm.AnthropicClient)
+    client._client = SimpleNamespace()
+    client._model = "claude-3-5-sonnet-latest"
+    t = client.analyze("AAPL")
+    assert t.grounding == "researched"
+
+
 def test_chat_completions_grounding_researched_when_tool_and_citation(monkeypatch):
     """When the chat-completions loop reports a custom tool ran and the thesis
     contains at least one source_url, engine grounding is 'researched'."""

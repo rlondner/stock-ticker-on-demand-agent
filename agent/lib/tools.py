@@ -171,7 +171,8 @@ def _get_earnings(args):
 def _schema(name, description, api="responses"):
     """Build a function-tool schema for the target API. The Responses API takes
     a flat shape ({type, name, description, parameters}); chat.completions
-    nests the function under a `function` key."""
+    nests the function under a `function` key; Anthropic Messages uses
+    ``input_schema`` and no ``type`` key on custom tools."""
     parameters = {
         "type": "object",
         "properties": {"ticker": {"type": "string", "description": "US-listed ticker symbol"}},
@@ -181,6 +182,8 @@ def _schema(name, description, api="responses"):
         return {"type": "function", "function": {
             "name": name, "description": description, "parameters": parameters,
         }}
+    if api == "anthropic":
+        return {"name": name, "description": description, "input_schema": parameters}
     return {"type": "function", "name": name, "description": description, "parameters": parameters}
 
 

@@ -55,59 +55,6 @@ pnpm dev                   # http://localhost:3000
 
 Submit `AAPL` in the form and wait ~30–90s.
 
-## Configuration reference
-
-All variables live in `.env`. `.env.example` is the source of truth — keep it in sync when adding new ones.
-
-### Required
-
-| Var | Source | Example | What breaks without it |
-|---|---|---|---|
-| `NEON_DATABASE_URL` | Neon dashboard → Connection string | `postgresql://user:pass@ep-…neon.tech/neondb` | DB calls fail everywhere |
-| `OPENAI_API_KEY` | OpenAI dashboard → API Keys | `sk-proj-…` | Agent crashes when it tries to call the LLM |
-
-### Required when `AGENT_RUNTIME=daytona` (the default)
-
-| Var | Source | Example | What breaks without it |
-|---|---|---|---|
-| `DAYTONA_API_KEY` | Daytona dashboard → API Keys | `dt_abc…` | Spawn fails → 500 on submit |
-| `DAYTONA_TARGET` | Daytona dashboard | `us` | Region defaults may misroute the spawn |
-
-Set `AGENT_RUNTIME=subprocess` in `.env` to skip Daytona entirely (see *HOW-TO: Run the agent locally without Daytona* below).
-
-### Optional — OpenAI-compatible endpoint
-
-| Var | What it does |
-|---|---|
-| `OPENAI_API_URL` | Override the OpenAI base URL to point at any OpenAI-compatible endpoint (Azure OpenAI, OpenRouter, vLLM, LiteLLM, local server, …). Unset → defaults to `https://api.openai.com/v1`. Forwarded into the sandbox only when set. |
-| `OPENAI_MODEL` | Override the model the agent calls. Unset → defaults to `gpt-4.1-mini`. Must be supported by whichever endpoint `OPENAI_API_URL` points at. Forwarded into the sandbox only when set. |
-| `OPENAI_USE_RESPONSES_API` | Unset or `true` (default): use OpenAI's Responses API + hosted `web_search` tool. `false`: use `chat.completions` without `web_search`. **Set this to `false` for any non-OpenAI endpoint** (Ollama, vLLM, LiteLLM, OpenRouter, Azure) — most only implement `/v1/chat/completions`. Without `web_search` the model relies on its training-cutoff knowledge of the ticker. Forwarded into the sandbox only when set. |
-
-### Optional — Agent runtime
-
-| Var | What it does |
-|---|---|
-| `AGENT_RUNTIME` | `daytona` (default) spawns the agent in a Daytona sandbox. `subprocess` runs the Python agent as a detached local child process (no Daytona account needed). Unknown values cause the API route to throw on the next submit. |
-
-### Optional — Sentry block (omit entirely to disable Sentry)
-
-| Var | What it does |
-|---|---|
-| `SENTRY_DSN_NEXTJS` | DSN for the NextJS Sentry project |
-| `SENTRY_DSN_AGENT` | DSN for the Python agent Sentry project (separate project recommended) |
-| `SENTRY_AUTH_TOKEN` | Source-map upload during CI; not needed at runtime |
-
-### Optional — Datadog block (omit entirely to disable Datadog)
-
-| Var | What it does |
-|---|---|
-| `DD_API_KEY` | Master switch for Datadog. If unset, Datadog is fully disabled. |
-| `DD_SITE` | `datadoghq.com` / `datadoghq.eu` / `us3.datadoghq.com` / etc. |
-| `DD_SERVICE` | Service name in Datadog. `stock-agent-frontend` for NextJS; `stock-agent` is forced inside the sandbox. |
-| `DD_ENV` | `development` / `staging` / `production` |
-| `DD_TRACE_ENABLED` | `false` short-circuits dd-trace initialization (NextJS + agent). Use when running locally without a Datadog Agent on `localhost:8126` to silence the "failed to send, dropping N traces" warnings. Leave unset/`true` to ship traces. |
-| `DD_EXPORTER` | **Python agent only.** `agent` (default) → ddtrace + local Datadog Agent on `localhost:8126`. `otlp` → OTLP HTTP exporter ships directly to Datadog's intake (no Agent needed — ideal for Daytona sandboxes). With `otlp`, you lose ddtrace's auto-instrumentation (httpx/psycopg/openai/logging) and only the explicit OTel spans we create get shipped. NextJS continues to use dd-trace regardless. |
-| `DD_OTLP_ENDPOINT` | Required when `DD_EXPORTER=otlp`. The exact OTLP HTTP intake URL (Datadog has shifted this path across documentation versions — copy it from your account's OTLP-ingest page). The agent posts span batches to this URL with a `DD-API-KEY` header. |
 
 ## HOW-TO: Provision Neon
 
@@ -322,6 +269,87 @@ Expected: `pending → running → complete` over ~30–90 seconds, then the scr
 | Sweep stuck `running` rows older than 10min | `curl -X POST http://localhost:3000/api/cleanup` |
 | Inspect a specific sandbox's logs | Daytona dashboard → Sandboxes → search by the `sandbox_id` from the job row |
 | Wipe all demo data | `psql $NEON_DATABASE_URL -c "TRUNCATE jobs;"` |
+
+
+## Reading the analysis result
+
+Each completed job's `result` JSON carries a `grounding` field that reports what the agent actually did. The engine (`_grounding()` in `agent/lib/llm.py`) sets it from observed tool calls — never from whatever the model self-reports — so use it as the source of truth when auditing an analysis.
+
+| `grounding` | Meaning | Signals to look for |
+|---|---|---|
+| `snapshot_only` | No tool was invoked. The thesis is derived only from the yfinance snapshot passed in the user prompt. | `llm.tools_used` empty; no `tool.*.ok` log lines |
+| `limited` | At least one tool ran, but no thesis point carries a `source_url`. Typical when only the structured-data tools ran (`get_financials`, `get_valuation`, `get_earnings`), or when `web_search` ran but Claude/GPT chose not to cite. | `llm.tools_used` non-empty; `tool.*.ok` lines present; every `source_url` in `bull_case` / `bear_case` / `key_risks` is `null` |
+| `researched` | At least one tool ran AND at least one thesis point has a `source_url`. Intended "live-web-grounded" outcome. | `llm.tools_used` usually contains `web_search`; ≥1 `source_url` populated in the JSON |
+
+**Where each signal comes from**
+
+- `result.grounding` — attribute set on the parsed `Thesis` after the loop returns. Overrides whatever the model claimed.
+- `llm.tools_used` — comma-separated attribute on the `llm.analyze` span. Includes both custom function tools (`get_financials`, …) and hosted server tools (`web_search` under Responses or Anthropic).
+- `llm.iterations` — sibling span attribute; number of round-trips the tool loop made before the model stopped calling tools.
+- `tool.<name>.ok` / `tool.<name>.failed` — structured log lines emitted per dispatch by `_observed_tool()` in `agent/lib/tools.py`. Failures include the exception message in the `reason` / `error` field.
+- `source_url` — populated by the model per thesis point when it cites an external source; `null` when the claim is grounded in the snapshot facts.
+
+**Debugging `grounding: limited` when you expected `researched`**
+
+Read `llm.tools_used` on the `llm.analyze` span first:
+- **`web_search` absent** — search never fired. On the Anthropic path (`OPENAI_API_KEY` starts with `sk-ant-`), the `web_search_20250305` server tool must be enabled per-workspace in the **Anthropic Console → Settings → Privacy**. On the OpenAI Responses path, make sure `OPENAI_USE_RESPONSES_API` isn't `false` (the `chat.completions` fallback has no `web_search` at all). The model may also skip search when the snapshot already answers the question — tighten `agent/lib/prompts.py` if you want it forced.
+- **`web_search` present** — search fired but the model didn't cite. That's a prompt-adherence issue, not a wiring issue — again, `agent/lib/prompts.py`.
+
+Note: URLs the model emits are not verified. `researched` means "tools ran and the model wrote at least one URL" — a fabricated URL still counts. Spot-check citations when the distinction matters.
+
+## Configuration reference
+
+All variables live in `.env`. `.env.example` is the source of truth — keep it in sync when adding new ones.
+
+### Required
+
+| Var | Source | Example | What breaks without it |
+|---|---|---|---|
+| `NEON_DATABASE_URL` | Neon dashboard → Connection string | `postgresql://user:pass@ep-…neon.tech/neondb` | DB calls fail everywhere |
+| `OPENAI_API_KEY` | OpenAI dashboard → API Keys | `sk-proj-…` | Agent crashes when it tries to call the LLM |
+
+### Required when `AGENT_RUNTIME=daytona` (the default)
+
+| Var | Source | Example | What breaks without it |
+|---|---|---|---|
+| `DAYTONA_API_KEY` | Daytona dashboard → API Keys | `dt_abc…` | Spawn fails → 500 on submit |
+| `DAYTONA_TARGET` | Daytona dashboard | `us` | Region defaults may misroute the spawn |
+
+Set `AGENT_RUNTIME=subprocess` in `.env` to skip Daytona entirely (see *HOW-TO: Run the agent locally without Daytona* below).
+
+### Optional — OpenAI-compatible endpoint
+
+| Var | What it does |
+|---|---|
+| `OPENAI_API_URL` | Override the OpenAI base URL to point at any OpenAI-compatible endpoint (Azure OpenAI, OpenRouter, vLLM, LiteLLM, local server, …). Unset → defaults to `https://api.openai.com/v1`. Forwarded into the sandbox only when set. |
+| `OPENAI_MODEL` | Override the model the agent calls. Unset → defaults to `gpt-4.1-mini`. Must be supported by whichever endpoint `OPENAI_API_URL` points at. Forwarded into the sandbox only when set. |
+| `OPENAI_USE_RESPONSES_API` | Unset or `true` (default): use OpenAI's Responses API + hosted `web_search` tool. `false`: use `chat.completions` without `web_search`. **Set this to `false` for any non-OpenAI endpoint** (Ollama, vLLM, LiteLLM, OpenRouter, Azure) — most only implement `/v1/chat/completions`. Without `web_search` the model relies on its training-cutoff knowledge of the ticker. Forwarded into the sandbox only when set. |
+
+### Optional — Agent runtime
+
+| Var | What it does |
+|---|---|
+| `AGENT_RUNTIME` | `daytona` (default) spawns the agent in a Daytona sandbox. `subprocess` runs the Python agent as a detached local child process (no Daytona account needed). Unknown values cause the API route to throw on the next submit. |
+
+### Optional — Sentry block (omit entirely to disable Sentry)
+
+| Var | What it does |
+|---|---|
+| `SENTRY_DSN_NEXTJS` | DSN for the NextJS Sentry project |
+| `SENTRY_DSN_AGENT` | DSN for the Python agent Sentry project (separate project recommended) |
+| `SENTRY_AUTH_TOKEN` | Source-map upload during CI; not needed at runtime |
+
+### Optional — Datadog block (omit entirely to disable Datadog)
+
+| Var | What it does |
+|---|---|
+| `DD_API_KEY` | Master switch for Datadog. If unset, Datadog is fully disabled. |
+| `DD_SITE` | `datadoghq.com` / `datadoghq.eu` / `us3.datadoghq.com` / etc. |
+| `DD_SERVICE` | Service name in Datadog. `stock-agent-frontend` for NextJS; `stock-agent` is forced inside the sandbox. |
+| `DD_ENV` | `development` / `staging` / `production` |
+| `DD_TRACE_ENABLED` | `false` short-circuits dd-trace initialization (NextJS + agent). Use when running locally without a Datadog Agent on `localhost:8126` to silence the "failed to send, dropping N traces" warnings. Leave unset/`true` to ship traces. |
+| `DD_EXPORTER` | **Python agent only.** `agent` (default) → ddtrace + local Datadog Agent on `localhost:8126`. `otlp` → OTLP HTTP exporter ships directly to Datadog's intake (no Agent needed — ideal for Daytona sandboxes). With `otlp`, you lose ddtrace's auto-instrumentation (httpx/psycopg/openai/logging) and only the explicit OTel spans we create get shipped. NextJS continues to use dd-trace regardless. |
+| `DD_OTLP_ENDPOINT` | Required when `DD_EXPORTER=otlp`. The exact OTLP HTTP intake URL (Datadog has shifted this path across documentation versions — copy it from your account's OTLP-ingest page). The agent posts span batches to this URL with a `DD-API-KEY` header. |
 
 ## Troubleshooting
 

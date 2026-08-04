@@ -250,3 +250,29 @@ def test_build_toolset_returns_schemas_and_matching_registry():
         assert s["parameters"]["required"] == ["ticker"]
     assert set(registry.keys()) == set(names)
     assert all(callable(fn) for fn in registry.values())
+
+
+def test_build_toolset_chat_shape_nests_function():
+    schemas, registry = tools.build_toolset(api="chat")
+    for s in schemas:
+        # chat.completions requires {"type":"function","function":{...}}
+        assert s["type"] == "function"
+        assert isinstance(s.get("function"), dict)
+        assert set(s["function"].keys()) == {"name", "description", "parameters"}
+        assert s["function"]["parameters"]["required"] == ["ticker"]
+    names = {s["function"]["name"] for s in schemas}
+    assert names == {"get_financials", "get_valuation", "get_earnings"}
+    assert set(registry.keys()) == names
+
+
+def test_build_toolset_anthropic_shape_uses_input_schema():
+    schemas, registry = tools.build_toolset(api="anthropic")
+    for s in schemas:
+        # Anthropic custom tools: no `type`, JSON Schema under `input_schema`.
+        assert "type" not in s
+        assert set(s.keys()) == {"name", "description", "input_schema"}
+        assert s["input_schema"]["required"] == ["ticker"]
+        assert s["input_schema"]["properties"]["ticker"]["type"] == "string"
+    names = {s["name"] for s in schemas}
+    assert names == {"get_financials", "get_valuation", "get_earnings"}
+    assert set(registry.keys()) == names

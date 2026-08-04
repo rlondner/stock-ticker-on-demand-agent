@@ -7,12 +7,13 @@ from typing import Protocol
 from pydantic import BaseModel, Field
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from openai import OpenAI, RateLimitError, APIConnectionError, InternalServerError
+import anthropic
 from opentelemetry import trace
 from .prompts import SYSTEM_PROMPT, user_prompt
 from .observability import get_host, emit_log
 from .finance import Snapshot, fetch_snapshot
 from . import metrics
-from .agent_loop import run_agent_loop, run_chat_completions_loop
+from .agent_loop import run_agent_loop, run_chat_completions_loop, run_anthropic_loop
 from .tools import build_toolset
 
 logger = logging.getLogger(__name__)
@@ -59,6 +60,8 @@ def parse_thesis(raw: str) -> Thesis:
     return Thesis(**data)
 
 DEFAULT_MODEL = "gpt-4.1-mini"
+DEFAULT_ANTHROPIC_MODEL = "claude-3-5-sonnet-latest"
+ANTHROPIC_MAX_TOKENS = int(os.environ.get("ANTHROPIC_MAX_TOKENS", "4096"))
 MAX_ITERS = int(os.environ.get("AGENT_MAX_ITERS", "6"))
 LOOP_TIMEOUT_S = float(os.environ.get("AGENT_LOOP_TIMEOUT_S", "90"))
 
@@ -241,9 +244,102 @@ class OpenAIClient:
                     ticker,
                 )
 
+class AnthropicClient:
+    """Native Anthropic Messages-API client. Wires the three custom data tools
+    (get_financials/get_valuation/get_earnings) alongside Anthropic's hosted
+    ``web_search_20250305`` server tool — the OpenAI-compat endpoint can't
+    forward that server tool, so we go direct."""
+
+    def __init__(self, model: str | None = None):
+        self._client = anthropic.Anthropic(
+            api_key=os.environ["OPENAI_API_KEY"],
+            http_client=metrics.build_httpx_client(),
+        )
+        self._model = model or os.environ.get("OPENAI_MODEL") or DEFAULT_ANTHROPIC_MODEL
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=16),
+        retry=retry_if_exception_type((
+            anthropic.RateLimitError, anthropic.APIConnectionError,
+            anthropic.InternalServerError, EmptyLLMResponseError,
+        )),
+        reraise=True,
+    )
+    def analyze(self, ticker: str, snapshot: Snapshot | None = None) -> Thesis:
+        metrics.set_current_ticker(ticker)
+        tracer = trace.get_tracer("stock-agent")
+        api = "anthropic.messages"
+        with tracer.start_as_current_span("llm.analyze") as span:
+            span.set_attribute("host", get_host())
+            span.set_attribute("model", self._model)
+            span.set_attribute("api", api)
+            system = SYSTEM_PROMPT
+            messages = [{"role": "user", "content": user_prompt(ticker, snapshot=snapshot)}]
+            request_started_at = time.perf_counter()
+            try:
+                def _create(system, messages, tools):
+                    kw = {
+                        "model": self._model,
+                        "max_tokens": ANTHROPIC_MAX_TOKENS,
+                        "system": system,
+                        "messages": messages,
+                    }
+                    if tools:
+                        kw["tools"] = tools
+                    return self._client.messages.create(**kw)
+
+                _schemas, _registry = build_toolset(ticker, api="anthropic")
+                tools = [
+                    {"type": "web_search_20250305", "name": "web_search"},
+                    *_schemas,
+                ]
+                loop = run_anthropic_loop(
+                    _create, system, messages, tools=tools,
+                    function_registry=_registry, max_iters=MAX_ITERS, timeout_s=LOOP_TIMEOUT_S,
+                )
+                text, tin, tout = loop.text, loop.tokens_in, loop.tokens_out
+                finish_reason = "budget_exhausted" if loop.budget_exhausted else "stop"
+                span.set_attribute("llm.iterations", loop.iterations)
+                span.set_attribute("llm.tools_used", ",".join(loop.tools_used))
+                tools_ran = bool(loop.tools_used)
+
+                span.set_attribute("tokens_in", tin)
+                span.set_attribute("tokens_out", tout)
+                metrics.record_llm_tokens(self._model, api, tin, tout, ticker)
+                _require_nonempty(text, api=api, finish_reason=finish_reason,
+                                  span=span, model=self._model, ticker=ticker)
+
+                _record_raw_response(span, text, finish_reason)
+                thesis = parse_thesis(text)
+                thesis = thesis.model_copy(update={"grounding": _grounding(tools_ran, thesis)})
+                _record_parsed_response(span, thesis)
+                metrics.record_llm_call(self._model, api, "ok", ticker)
+                return thesis
+            except Exception:
+                metrics.record_llm_call(self._model, api, "error", ticker)
+                raise
+            finally:
+                metrics.record_llm_duration(
+                    self._model, api,
+                    (time.perf_counter() - request_started_at) * 1000,
+                    ticker,
+                )
+
+
+def _pick_client() -> LLMClient:
+    """Route by the API-key prefix. Anthropic keys start with ``sk-ant-``; anything
+    else (or missing) falls through to the OpenAI client, which also serves the
+    OpenAI-compat backends (Ollama, vLLM, LiteLLM, OpenRouter, Azure)."""
+    key = os.environ.get("OPENAI_API_KEY", "")
+    if key.startswith("sk-ant-"):
+        return AnthropicClient()
+    return OpenAIClient()
+
+
 def run_analysis(ticker: str) -> dict:
     snapshot = fetch_snapshot(ticker)
-    client: LLMClient = OpenAIClient()
+    client: LLMClient = _pick_client()
     thesis = client.analyze(ticker, snapshot=snapshot)
     return {
         **thesis.model_dump(),
