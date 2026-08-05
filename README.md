@@ -1,6 +1,10 @@
 # Daytona Stock-Agent Demo
 
-A reference architecture for **short-lived AI agents hosted in Daytona sandboxes**. A user submits a stock ticker in a NextJS app; an ephemeral Daytona VM is spawned, runs an OpenAI agent that produces a buy/hold/sell analysis, writes the result to Neon Postgres, and self-deletes. The browser polls Neon until the analysis is ready.
+A reference architecture for **short-lived AI agents hosted in Daytona sandboxes**. A user submits a stock ticker in a NextJS app; an ephemeral Daytona VM is spawned, runs an LLM-driven agent that produces a buy/hold/sell analysis, writes the result to Neon Postgres, and self-deletes. The browser polls Neon until the analysis is ready.
+
+The agent talks to any **OpenAI-compatible LLM endpoint** (OpenAI Responses / chat.completions, Ollama, vLLM, LiteLLM, OpenRouter, Azure OpenAI, …) and auto-routes to **Anthropic's native Messages API** when the key starts with `sk-ant-` so `web_search_20250305` can be used. Daytona itself is **optional** — set `AGENT_RUNTIME=subprocess` to run the Python agent as a local child process with no Daytona account or CLI.
+
+> 📖 **Companion source code to the blog post [Transient AI Agents — A Reference Agentic Architecture for Ephemeral, Pay-by-the-Second Agentic Workloads](https://medium.com/@raphaellondner/transient-ai-agents-a-reference-agentic-architecture-for-ephemeral-pay-by-the-second-agentic-123f5e68129d).**
 
 > ⚠️ **Not financial advice. Demo only.** The LLM output is shown to users behind a disclaimer.
 
@@ -11,7 +15,7 @@ Browser ──► NextJS API ──► Neon (jobs row, status='pending')
               │
               └─► Daytona  ──► ephemeral VM boots
                               └─► reads job row from Neon
-                              └─► OpenAI Responses API + web_search tool
+                              └─► LLM API (OpenAI-compatible or Anthropic native) + optional web_search tool
                               └─► writes result + status='complete' to Neon
                               └─► self-deletes
 Browser polls /api/status/[id] every 2.5s → NextJS reads Neon → UI renders
@@ -26,15 +30,15 @@ Observability is **OpenTelemetry-first**. Set `SENTRY_DSN_*`, `DD_API_KEY`, both
 | Node.js | 20+ | NextJS 16 runtime |
 | pnpm | 9+ | Package manager |
 | Python | 3.12+ | Agent runtime (also inside the sandbox) |
-| Docker | any recent | Build the Daytona snapshot image |
+| Docker | any recent | **Daytona mode only** — needed to build the snapshot image with `make snapshot`. Skip if you run `AGENT_RUNTIME=subprocess`. |
 
-Accounts (all have free tiers):
+Accounts (most have free tiers):
 
 | Service | Required | What you need |
 |---|---|---|
-| [Neon](https://neon.tech) | yes | A project + the connection string |
-| [Daytona](https://www.daytona.io) | yes | An API key + the CLI installed locally |
-| [OpenAI](https://platform.openai.com) | yes | An API key with Responses API + `web_search` tool access |
+| [Neon](https://neon.tech) | yes | A project + the connection string. Job state lives here. |
+| An OpenAI-compatible LLM | yes | An API key from any of: OpenAI ([platform.openai.com](https://platform.openai.com)), Anthropic ([console.anthropic.com](https://console.anthropic.com) — the key starting with `sk-ant-` auto-routes to the native Messages API + `web_search_20250305`), or any endpoint that speaks the OpenAI API (Ollama, vLLM, LiteLLM, OpenRouter, Azure OpenAI, …) via `OPENAI_API_URL` + `OPENAI_USE_RESPONSES_API=false`. See the `OPENAI_*` block in *Configuration reference* for details. |
+| [Daytona](https://www.daytona.io) | conditional | Only for `AGENT_RUNTIME=daytona` (the default). You need an API key + the CLI installed locally. Set `AGENT_RUNTIME=subprocess` in `.env` to skip Daytona entirely and run the agent as a local child process. |
 | [Sentry](https://sentry.io) | optional | One project for NextJS, one for the Python agent |
 | [Datadog](https://www.datadoghq.com) | optional | An API key for the chosen site (US/EU/etc.) |
 
@@ -48,7 +52,7 @@ cp .env.example .env       # then fill in the required vars (see Configuration b
 
 pnpm install
 make seed                  # apply migrations to your Neon project
-make snapshot              # build & publish the Daytona snapshot
+make snapshot              # Daytona mode only — build & publish the sandbox snapshot
 
 pnpm dev                   # http://localhost:3000
 ```
@@ -140,21 +144,46 @@ The driver inserts a pending row, runs `agent.main()` in-process, and prints the
    ```
    `stock-agent:v1` should appear.
 
-## HOW-TO: Get an OpenAI key
+## HOW-TO: Configure the LLM provider
+
+The agent works with three provider families. In every case the API key lives in `OPENAI_API_KEY` (the name is retained across providers — routing happens by key prefix and by `OPENAI_USE_RESPONSES_API`).
+
+### Option A: OpenAI
 
 1. Sign up at [platform.openai.com](https://platform.openai.com).
 2. **Settings → API keys → Create new secret key.**
-3. Make sure your account has access to the **Responses API** and the **`web_search` built-in tool**.
+3. Confirm your account has access to the **Responses API** and the **`web_search` built-in tool**.
 4. Add to `.env`:
    ```
    OPENAI_API_KEY=sk-…
    ```
 
-The agent uses the model `gpt-4.1-mini` by default with the `web_search` tool. Expected cost per analysis: ~$0.05–$0.20.
+Default model is `gpt-4.1-mini` with the `web_search` tool. Expected cost per analysis: ~$0.05–$0.20. Set `OPENAI_MODEL` to pick a different model (`gpt-4.1`, `gpt-4o`, …).
 
-To route requests to an OpenAI-compatible endpoint instead, set `OPENAI_API_URL` in `.env` (e.g. `https://my-proxy.example.com/v1`). The agent passes it as the SDK's `base_url`; the model name and `web_search` tool must be supported by the target endpoint. Set `OPENAI_MODEL` in `.env` to pick a different model (e.g. `gpt-4.1`, `gpt-4o`, or a model name your endpoint recognizes).
+### Option B: Anthropic (Claude)
 
-For endpoints that don't implement the Responses API (Ollama, vLLM, LiteLLM, OpenRouter, Azure, …), also set `OPENAI_USE_RESPONSES_API=false`. The agent then uses `chat.completions` and drops the `web_search` tool — the model will rely on its training-cutoff knowledge of the ticker rather than live web data.
+1. Sign up at [console.anthropic.com](https://console.anthropic.com) and create an API key — it starts with `sk-ant-`.
+2. In the Anthropic Console, enable the `web_search_20250305` server tool under **Settings → Privacy → Web Search**. Required if you want `grounding=researched` (see *Reading the analysis result* below).
+3. Add to `.env`:
+   ```
+   OPENAI_API_KEY=sk-ant-…
+   OPENAI_MODEL=claude-3-5-sonnet-latest
+   ```
+
+The agent detects the `sk-ant-` prefix and routes to the native Anthropic Messages API, wiring the three custom data tools plus `web_search_20250305`. `OPENAI_API_URL` and `OPENAI_USE_RESPONSES_API` are **ignored** on this path.
+
+### Option C: Any other OpenAI-compatible endpoint (Ollama, vLLM, LiteLLM, OpenRouter, Azure OpenAI, …)
+
+1. Get an API key from your provider.
+2. Add to `.env`:
+   ```
+   OPENAI_API_KEY=<your key>
+   OPENAI_API_URL=https://my-proxy.example.com/v1
+   OPENAI_MODEL=<model name the endpoint recognizes>
+   OPENAI_USE_RESPONSES_API=false
+   ```
+
+The agent uses `chat.completions` and still wires the three custom data tools (`get_financials`, `get_valuation`, `get_earnings`). The hosted `web_search` tool is Responses-only and is **not** passed — the model relies on training-cutoff knowledge for anything the data tools don't cover, so expect `grounding=snapshot_only` or `limited`.
 
 ## HOW-TO: Enable Sentry only
 
@@ -306,7 +335,7 @@ All variables live in `.env`. `.env.example` is the source of truth — keep it 
 | Var | Source | Example | What breaks without it |
 |---|---|---|---|
 | `NEON_DATABASE_URL` | Neon dashboard → Connection string | `postgresql://user:pass@ep-…neon.tech/neondb` | DB calls fail everywhere |
-| `OPENAI_API_KEY` | OpenAI dashboard → API Keys | `sk-proj-…` | Agent crashes when it tries to call the LLM |
+| `OPENAI_API_KEY` | Whichever LLM provider you picked in *HOW-TO: Configure the LLM provider* — OpenAI, Anthropic (key starts with `sk-ant-`, auto-routes to native), or any OpenAI-compatible endpoint | `sk-proj-…` / `sk-ant-…` / provider-specific | Agent crashes when it tries to call the LLM |
 
 ### Required when `AGENT_RUNTIME=daytona` (the default)
 
@@ -323,7 +352,7 @@ Set `AGENT_RUNTIME=subprocess` in `.env` to skip Daytona entirely (see *HOW-TO: 
 |---|---|
 | `OPENAI_API_URL` | Override the OpenAI base URL to point at any OpenAI-compatible endpoint (Azure OpenAI, OpenRouter, vLLM, LiteLLM, local server, …). Unset → defaults to `https://api.openai.com/v1`. Forwarded into the sandbox only when set. |
 | `OPENAI_MODEL` | Override the model the agent calls. Unset → defaults to `gpt-4.1-mini`. Must be supported by whichever endpoint `OPENAI_API_URL` points at. Forwarded into the sandbox only when set. |
-| `OPENAI_USE_RESPONSES_API` | Unset or `true` (default): use OpenAI's Responses API + hosted `web_search` tool. `false`: use `chat.completions` without `web_search`. **Set this to `false` for any non-OpenAI endpoint** (Ollama, vLLM, LiteLLM, OpenRouter, Azure) — most only implement `/v1/chat/completions`. Without `web_search` the model relies on its training-cutoff knowledge of the ticker. Forwarded into the sandbox only when set. |
+| `OPENAI_USE_RESPONSES_API` | Unset or `true` (default): use OpenAI's Responses API + hosted `web_search` tool. `false`: use `chat.completions` — still wires the custom data tools (`get_financials`, `get_valuation`, `get_earnings`), but drops `web_search` (Responses-only). **Set this to `false` for any non-OpenAI endpoint** (Ollama, vLLM, LiteLLM, OpenRouter, Azure) — most only implement `/v1/chat/completions`. **Ignored on the Anthropic path** (`sk-ant-*` keys always use the native Messages API, which has its own `web_search_20250305` server tool). Forwarded into the sandbox only when set. |
 
 ### Optional — Agent runtime
 
