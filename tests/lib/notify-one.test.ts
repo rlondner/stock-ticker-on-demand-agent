@@ -55,6 +55,17 @@ describe("sendCompletionNotification", () => {
     expect(payload.body).toContain("hold");
   });
 
+  it("invokes execFile with a timeout so a hung CLI process can't hang callers forever", async () => {
+    const { sendCompletionNotification } = await import("@/lib/notify/one");
+    await sendCompletionNotification({
+      ticker: "AAPL", recommendation: "buy", summary: "Strong quarter.",
+      notifyChannel: "slack", notifyDestination: "#analysts",
+    });
+    const call = execFileMock.mock.calls[0];
+    const opts = call[2] as Record<string, unknown>;
+    expect(opts).toEqual(expect.objectContaining({ timeout: 10_000, killSignal: "SIGKILL" }));
+  });
+
   it("never throws when the CLI call fails, and resolves false", async () => {
     execFileMock.mockImplementationOnce((_cmd, _args, _opts, cb) => cb(new Error("boom")));
     const { sendCompletionNotification } = await import("@/lib/notify/one");

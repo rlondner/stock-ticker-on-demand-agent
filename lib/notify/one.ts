@@ -49,7 +49,7 @@ export async function sendCompletionNotification(job: NotifyJob): Promise<boolea
       "--no-install", "@withone/cli", "actions", "execute",
       job.notifyChannel, creds.actionId, creds.connectionKey,
       "-d", JSON.stringify(payload), "--agent",
-    ], { env: { ...process.env } });
+    ], { env: { ...process.env }, timeout: 10_000, killSignal: "SIGKILL" });
     ddLog("info", "notify.one.sent", { channel: job.notifyChannel, ticker: job.ticker });
     return true;
   } catch {
