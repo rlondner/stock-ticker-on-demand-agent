@@ -238,7 +238,7 @@ The demo ships with a basic `quick` tier (single quick-response agent). Enable `
    ```
    These must stay **below** the matching `DAYTONA_AUTO_DELETE_*_S` timeouts.
 4. Restart `pnpm dev`.
-5. Submit a ticker and select either **Deep** (researcher + analyst agents) or **Full** (same agents + fundamentals/risk summaries) from the depth dropdown. Expected runtime: `deep` ~30–60s, `full` ~60–120s.
+5. Submit a ticker and select either **Deep** (researcher + analyst agents) or **Full** (same agents + fundamentals/risk summaries) from the depth dropdown. Expected runtime: `deep` ~8 mins, `full` ~20 mins.
 
 For design details and crew composition, see `docs/superpowers/specs/2026-09-07-crewai-deep-analysis-design.md`.
 
@@ -346,7 +346,7 @@ In another (Git Bash or WSL — the script is bash):
 ./scripts/smoke.sh AAPL deep       # deep-analysis tier (requires YOUDOTCOM_API_KEY)
 ```
 
-Expected: `pending → running → complete` over ~30–90 seconds (quick) or 60–120s (deep), then the script prints the full JSON result. For `deep` and `full` tiers, the result includes `researcher_findings`, `fundamentals_analysis`, and `risk_analysis` sections with non-empty evidence and source links.
+Expected: `pending → running → complete` over ~2 mins (quick), ~8 mins (deep), or ~20 mins (full), then the script prints the full JSON result. For `deep` and `full` tiers, the result includes `researcher_findings`, `fundamentals_analysis`, and `risk_analysis` sections with non-empty evidence and source links.
 
 ## Operating the demo
 
