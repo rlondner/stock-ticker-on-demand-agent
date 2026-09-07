@@ -250,3 +250,51 @@ def test_build_toolset_returns_schemas_and_matching_registry():
         assert s["parameters"]["required"] == ["ticker"]
     assert set(registry.keys()) == set(names)
     assert all(callable(fn) for fn in registry.values())
+
+
+def test_observed_tool_uses_llmobs_tool_span(monkeypatch):
+    import contextlib
+    logs, span = _spy(monkeypatch)
+    calls = {"span": [], "annotate": []}
+
+    @contextlib.contextmanager
+    def fake_tool_span(name):
+        calls["span"].append(name)
+        yield "TOOL_SPAN"
+
+    monkeypatch.setattr(tools.llmobs, "tool_span", fake_tool_span)
+    monkeypatch.setattr(tools.llmobs, "annotate",
+                        lambda span, **kw: calls["annotate"].append((span, kw)))
+
+    run = tools._observed_tool("get_x", lambda args: {"value": args["ticker"]})
+    out = run({"ticker": "AAPL"})
+
+    assert out == {"value": "AAPL"}
+    assert calls["span"] == ["tool.get_x"]
+    assert calls["annotate"] == [
+        ("TOOL_SPAN", {"input_data": {"ticker": "AAPL"}, "output_data": {"value": "AAPL"}})
+    ]
+
+
+def test_observed_tool_annotates_error_outcome(monkeypatch):
+    import contextlib
+    logs, span = _spy(monkeypatch)
+    calls = {"annotate": []}
+
+    @contextlib.contextmanager
+    def fake_tool_span(name):
+        yield "TOOL_SPAN"
+
+    monkeypatch.setattr(tools.llmobs, "tool_span", fake_tool_span)
+    monkeypatch.setattr(tools.llmobs, "annotate",
+                        lambda span, **kw: calls["annotate"].append((span, kw)))
+
+    def boom(args):
+        raise RuntimeError("nope")
+    run = tools._observed_tool("get_x", boom)
+    out = run({"ticker": "AAPL"})
+
+    assert "error" in out
+    assert calls["annotate"] == [
+        ("TOOL_SPAN", {"input_data": {"ticker": "AAPL"}, "output_data": {"error": "RuntimeError: nope"}})
+    ]

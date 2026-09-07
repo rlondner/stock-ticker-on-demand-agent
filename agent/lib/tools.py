@@ -8,6 +8,7 @@ import yfinance
 from opentelemetry import trace
 
 from .observability import emit_log
+from . import llmobs
 
 
 def _observed_tool(name, fn, bound_ticker=None):
@@ -26,30 +27,35 @@ def _observed_tool(name, fn, bound_ticker=None):
         # below (failed log + span event) always holds.
         args = args if isinstance(args, dict) else {}
         span = trace.get_current_span()
-        if bound_ticker is not None:
-            supplied = args.get("ticker")
-            if supplied and str(supplied).strip().upper() != bound_ticker.upper():
-                reason = (f"ticker {supplied!r} does not match the analyzed "
-                          f"ticker {bound_ticker!r}")
-                emit_log("warn", f"tool.{name}.failed", ticker=bound_ticker, reason=reason)
+        with llmobs.tool_span(f"tool.{name}") as tspan:
+            if bound_ticker is not None:
+                supplied = args.get("ticker")
+                if supplied and str(supplied).strip().upper() != bound_ticker.upper():
+                    reason = (f"ticker {supplied!r} does not match the analyzed "
+                              f"ticker {bound_ticker!r}")
+                    emit_log("warn", f"tool.{name}.failed", ticker=bound_ticker, reason=reason)
+                    span.add_event(f"tool.{name}", {"outcome": "error", "error": reason})
+                    llmobs.annotate(tspan, input_data=args, output_data={"error": reason})
+                    return {"error": reason}
+                args = {**args, "ticker": bound_ticker}
+            ticker = args.get("ticker")
+            try:
+                result = fn(args)
+            except Exception as exc:
+                reason = f"{type(exc).__name__}: {exc}"
+                emit_log("warn", f"tool.{name}.failed", ticker=ticker, reason=reason)
                 span.add_event(f"tool.{name}", {"outcome": "error", "error": reason})
+                llmobs.annotate(tspan, input_data=args, output_data={"error": reason})
                 return {"error": reason}
-            args = {**args, "ticker": bound_ticker}
-        ticker = args.get("ticker")
-        try:
-            result = fn(args)
-        except Exception as exc:
-            reason = f"{type(exc).__name__}: {exc}"
-            emit_log("warn", f"tool.{name}.failed", ticker=ticker, reason=reason)
-            span.add_event(f"tool.{name}", {"outcome": "error", "error": reason})
-            return {"error": reason}
-        if isinstance(result, dict) and "error" in result:
-            emit_log("warn", f"tool.{name}.failed", ticker=ticker, reason=str(result["error"]))
-            span.add_event(f"tool.{name}", {"outcome": "error", "error": str(result["error"])})
+            if isinstance(result, dict) and "error" in result:
+                emit_log("warn", f"tool.{name}.failed", ticker=ticker, reason=str(result["error"]))
+                span.add_event(f"tool.{name}", {"outcome": "error", "error": str(result["error"])})
+                llmobs.annotate(tspan, input_data=args, output_data=result)
+                return result
+            emit_log("info", f"tool.{name}.ok", ticker=ticker)
+            span.add_event(f"tool.{name}", {"outcome": "ok"})
+            llmobs.annotate(tspan, input_data=args, output_data=result)
             return result
-        emit_log("info", f"tool.{name}.ok", ticker=ticker)
-        span.add_event(f"tool.{name}", {"outcome": "ok"})
-        return result
 
     return _run
 
