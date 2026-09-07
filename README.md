@@ -353,7 +353,7 @@ Expected: `pending → running → complete` over ~2 mins (quick), ~8 mins (deep
 | Task | How |
 |---|---|
 | See all jobs | `http://localhost:3000/admin` |
-| Sweep stuck `running` rows older than 10min | `curl -X POST http://localhost:3000/api/cleanup` |
+| Sweep stuck `running` rows past their tier's threshold (depth-aware, see below) | `curl -X POST http://localhost:3000/api/cleanup` |
 | Inspect a specific sandbox's logs | Daytona dashboard → Sandboxes → search by the `sandbox_id` from the job row |
 | Wipe all demo data | `psql $NEON_DATABASE_URL -c "TRUNCATE jobs;"` |
 
@@ -370,9 +370,9 @@ Expected: `pending → running → complete` over ~2 mins (quick), ~8 mins (deep
 - **Fix:** Check Daytona logs for the sandbox. Verify the sandbox got the `NEON_DATABASE_URL` env var. Confirm Neon allows connections from the Daytona network.
 
 ### Job stuck in `running` forever
-- **Symptom:** Row is `running` for > 10min.
+- **Symptom:** Row is `running` well past its tier's expected runtime (~2min quick, ~8min deep, ~20min full).
 - **Cause:** OpenAI hang, or the agent crashed *between* `mark_running` and the LLM call without the `except` block running.
-- **Fix:** `curl -X POST http://localhost:3000/api/cleanup` — sweeps rows older than 10min into `failed` with `error='timeout'`. The Daytona `autoDeleteInterval=600` kills the sandbox on its own.
+- **Fix:** `curl -X POST http://localhost:3000/api/cleanup` — sweeps rows into `failed` with `error='timeout'`, but only once each row's sandbox is guaranteed to be gone: the sweep threshold is depth-aware, set to that tier's `DAYTONA_AUTO_DELETE_{QUICK,DEEP,FULL}_S` (600s/900s/1500s by default) plus a 90s grace period, so `deep`/`full` jobs that are still legitimately running are never swept out from under a job that's about to succeed. The matching Daytona sandbox self-deletes on its own once its own `autoDeleteInterval` elapses.
 
 ### LLM returns invalid JSON
 - **Symptom:** Job goes `running → failed`; `error` starts with `ValueError: LLM did not return valid JSON`.
@@ -391,7 +391,7 @@ Expected: `pending → running → complete` over ~2 mins (quick), ~8 mins (deep
 
 ### Sandbox not self-deleting
 - **Symptom:** Daytona dashboard shows lots of stopped-but-not-deleted sandboxes.
-- **Cause:** `self_delete()` is intentionally swallowed-error code; a Daytona API hiccup will leave the sandbox until `autoDeleteInterval` expires (10min).
+- **Cause:** `self_delete()` is intentionally swallowed-error code; a Daytona API hiccup will leave the sandbox until `autoDeleteInterval` expires (depth-aware: 600s/900s/1500s for quick/deep/full by default, via `autoDeleteIntervalFor()` in `lib/daytona.ts`).
 - **Fix:** This is expected — it's the safety net. If the count gets unwieldy, batch delete in the Daytona dashboard. If you see this constantly, check that `DAYTONA_API_KEY` is forwarded into the sandbox env (it must be, for self-delete to work).
 
 ### Local Neon migration fails

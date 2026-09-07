@@ -16,7 +16,7 @@ function client(): Daytona {
   return _dt;
 }
 
-function autoDeleteIntervalFor(depth: Depth): number {
+export function autoDeleteIntervalFor(depth: Depth): number {
   const key = { quick: "DAYTONA_AUTO_DELETE_QUICK_S", deep: "DAYTONA_AUTO_DELETE_DEEP_S", full: "DAYTONA_AUTO_DELETE_FULL_S" }[depth];
   const fallback = { quick: 600, deep: 900, full: 1500 }[depth];
   const raw = process.env[key];
