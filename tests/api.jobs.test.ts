@@ -36,7 +36,10 @@ function req(body: unknown): Request {
 }
 
 describe("POST /api/jobs", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    delete process.env.ONE_SECRET;
+  });
 
   it("rejects an empty ticker with 400", async () => {
     const res = await POST(req({ ticker: "" }));
@@ -61,5 +64,49 @@ describe("POST /api/jobs", () => {
     await POST(req({ ticker: "" }));
     expect(jobsSubmitted).toHaveBeenCalledWith("accepted", "AAPL");
     expect(jobsSubmitted).toHaveBeenCalledWith("rejected", "unknown");
+  });
+
+  it("accepts a valid slack notify config", async () => {
+    process.env.ONE_SECRET = "sk_test";
+    const res = await POST(req({ ticker: "AAPL", notifyChannel: "slack", notifyDestination: "#analysts" }));
+    expect(res.status).toBe(200);
+  });
+
+  it("accepts a valid gmail notify config", async () => {
+    process.env.ONE_SECRET = "sk_test";
+    const res = await POST(req({ ticker: "AAPL", notifyChannel: "gmail", notifyDestination: "jane@example.com" }));
+    expect(res.status).toBe(200);
+  });
+
+  it("rejects notifyChannel without a destination", async () => {
+    process.env.ONE_SECRET = "sk_test";
+    const res = await POST(req({ ticker: "AAPL", notifyChannel: "slack" }));
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects a malformed gmail destination", async () => {
+    process.env.ONE_SECRET = "sk_test";
+    const res = await POST(req({ ticker: "AAPL", notifyChannel: "gmail", notifyDestination: "not-an-email" }));
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects a malformed slack destination", async () => {
+    process.env.ONE_SECRET = "sk_test";
+    const res = await POST(req({ ticker: "AAPL", notifyChannel: "slack", notifyDestination: "general" }));
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects a notify request when ONE_SECRET is unset", async () => {
+    delete process.env.ONE_SECRET;
+    const res = await POST(req({ ticker: "AAPL", notifyChannel: "slack", notifyDestination: "#analysts" }));
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/not configured/);
+  });
+
+  it("accepts a plain submit with no notify fields regardless of ONE_SECRET", async () => {
+    delete process.env.ONE_SECRET;
+    const res = await POST(req({ ticker: "AAPL" }));
+    expect(res.status).toBe(200);
   });
 });
