@@ -22,6 +22,9 @@ export default async function JobPage({ params }: { params: Promise<{ id: string
     createdAt: row.createdAt.toISOString(),
     startedAt: row.startedAt ? row.startedAt.toISOString() : null,
     completedAt: row.completedAt ? row.completedAt.toISOString() : null,
+    notifyChannel: (row.notifyChannel as SerializedJob["notifyChannel"]) ?? null,
+    notifyDestination: row.notifyDestination ?? null,
+    notifiedAt: row.notifiedAt ? row.notifiedAt.toISOString() : null,
   };
   return <JobLivePoller initialJob={initial} />;
 }

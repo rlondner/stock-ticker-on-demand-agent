@@ -14,6 +14,9 @@ export const jobs = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     startedAt: timestamp("started_at", { withTimezone: true }),
     completedAt: timestamp("completed_at", { withTimezone: true }),
+    notifyChannel: text("notify_channel"),
+    notifyDestination: text("notify_destination"),
+    notifiedAt: timestamp("notified_at", { withTimezone: true }),
   },
   (t) => ({
     userStatusCreatedIdx: index("jobs_user_status_created_idx").on(
@@ -26,3 +29,4 @@ export type Job = typeof jobs.$inferSelect;
 export type NewJob = typeof jobs.$inferInsert;
 export type JobStatus = "pending" | "running" | "complete" | "failed";
 export type Recommendation = "buy" | "hold" | "sell";
+export type NotifyChannel = "slack" | "gmail";

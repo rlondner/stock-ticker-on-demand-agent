@@ -1,5 +1,6 @@
 import type { JobStatus } from "@/lib/ui/status-pill";
 import type { Recommendation } from "@/lib/ui/signal-pill";
+import type { NotifyChannel } from "@/lib/db/schema";
 
 export type ThesisPoint = { claim: string; evidence: string; source_url: string | null };
 
@@ -51,4 +52,7 @@ export type SerializedJob = {
   createdAt: string; // ISO
   startedAt: string | null; // ISO
   completedAt: string | null; // ISO
+  notifyChannel: NotifyChannel | null;
+  notifyDestination: string | null;
+  notifiedAt: string | null; // ISO
 };
