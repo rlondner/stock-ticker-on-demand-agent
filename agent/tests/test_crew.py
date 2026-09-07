@@ -59,3 +59,16 @@ def test_max_execution_seconds_reads_env_per_depth(monkeypatch):
 def test_max_execution_seconds_defaults_when_unset(monkeypatch):
     monkeypatch.delenv("CREW_MAX_EXECUTION_S_DEEP", raising=False)
     assert crew._max_execution_seconds("deep") == 780
+
+
+def test_build_crew_divides_max_execution_time_across_four_agents(monkeypatch):
+    """Regression guard: _build_crew must divide the per-tier execution budget
+    across all 4 agents (not pass the full budget to each), since that
+    division is what keeps the crew within the sandbox's auto-delete budget."""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("CREW_MAX_EXECUTION_S_DEEP", "800")
+    crew_instance = crew._build_crew("MDB", None, "sb-1", "deep")
+    expected = 800 // 4
+    assert len(crew_instance.agents) == 4
+    for agent in crew_instance.agents:
+        assert agent.max_execution_time == expected
