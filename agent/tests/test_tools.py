@@ -250,3 +250,41 @@ def test_build_toolset_returns_schemas_and_matching_registry():
         assert s["parameters"]["required"] == ["ticker"]
     assert set(registry.keys()) == set(names)
     assert all(callable(fn) for fn in registry.values())
+
+
+def test_run_python_snippet_missing_code_returns_error():
+    assert tools._run_python_snippet({}) == {"error": "missing code"}
+
+
+def test_run_python_snippet_returns_stdout(monkeypatch):
+    fake_result = MagicMock(result="42\n", exit_code=0)
+    fake_sandbox = MagicMock()
+    fake_sandbox.process.code_run.return_value = fake_result
+    fake_daytona = MagicMock()
+    fake_daytona.get.return_value = fake_sandbox
+    monkeypatch.setattr(tools, "_daytona_client", lambda: fake_daytona)
+    out = tools._run_python_snippet({"code": "print(6*7)"}, sandbox_id="sb-1")
+    assert out == {"stdout": "42\n"}
+    fake_daytona.get.assert_called_once_with("sb-1")
+    fake_sandbox.process.code_run.assert_called_once_with("print(6*7)")
+
+
+def test_run_python_snippet_nonzero_exit_is_error(monkeypatch):
+    fake_result = MagicMock(result="Traceback...", exit_code=1)
+    fake_sandbox = MagicMock()
+    fake_sandbox.process.code_run.return_value = fake_result
+    fake_daytona = MagicMock()
+    fake_daytona.get.return_value = fake_sandbox
+    monkeypatch.setattr(tools, "_daytona_client", lambda: fake_daytona)
+    out = tools._run_python_snippet({"code": "1/0"}, sandbox_id="sb-1")
+    assert "error" in out and "Traceback" in out["error"]
+
+
+def test_build_code_exec_tool_wraps_with_observed_tool(monkeypatch):
+    logs, span = _spy(monkeypatch)
+    monkeypatch.setattr(tools, "_run_python_snippet",
+                        lambda args, sandbox_id=None: {"stdout": "ok"})
+    registry = tools.build_code_exec_tool(sandbox_id="sb-1")
+    out = registry["run_python_snippet"]({"code": "pass"})
+    assert out == {"stdout": "ok"}
+    assert any(m == "tool.run_python_snippet.ok" for _, m, _ in logs)

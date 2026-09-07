@@ -9,6 +9,23 @@ from opentelemetry import trace
 
 from .observability import emit_log
 
+_daytona_client_singleton = None
+
+
+def _daytona_client():
+    """Lazily construct the Daytona SDK client using the same DAYTONA_API_KEY
+    already forwarded into the sandbox for self_delete. Never called at
+    import time so tests never need real credentials.
+
+    Uses the `daytona` package (the current, non-deprecated SDK; `daytona_sdk`
+    is deprecated upstream but exposes an identical API)."""
+    global _daytona_client_singleton
+    if _daytona_client_singleton is None:
+        import os
+        from daytona import Daytona, DaytonaConfig
+        _daytona_client_singleton = Daytona(DaytonaConfig(api_key=os.environ["DAYTONA_API_KEY"]))
+    return _daytona_client_singleton
+
 
 def _observed_tool(name, fn, bound_ticker=None):
     """Wrap a raw tool(args)->dict with uniform guarding + observability.
@@ -166,6 +183,28 @@ def _get_earnings(args):
     if not recent and next_date is None:
         return {"error": "no earnings data"}
     return {"next_earnings_date": next_date, "recent_quarters": recent}
+
+
+def _run_python_snippet(args, sandbox_id=None):
+    code = args.get("code")
+    if not code:
+        return {"error": "missing code"}
+    if not sandbox_id:
+        return {"error": "no sandbox_id configured for code execution"}
+    sandbox = _daytona_client().get(sandbox_id)
+    result = sandbox.process.code_run(code)
+    if getattr(result, "exit_code", 0) != 0:
+        return {"error": str(result.result)}
+    return {"stdout": str(result.result)}
+
+
+def build_code_exec_tool(sandbox_id: str | None = None) -> dict:
+    """Return a name->callable registry (just 'run_python_snippet') for the
+    Fundamentals Analyst to compute custom ratios/derived metrics via Daytona
+    code execution against the sandbox the agent is already running in."""
+    def _run(args):
+        return _run_python_snippet(args, sandbox_id=sandbox_id)
+    return {"run_python_snippet": _observed_tool("run_python_snippet", _run)}
 
 
 def _schema(name, description):
