@@ -112,6 +112,31 @@ DSN). `job_id` is never a metric tag; `ticker` is tagged on all metrics.
 
 Facade modules: `lib/observability/metrics.ts` (Next.js), `agent/lib/metrics.py` (agent).
 
+## Agent Observability (Datadog LLM Obs)
+
+Separate from the APM traces/metrics/logs above: the Python agent also emits
+to Datadog's dedicated [Agent Observability](https://www.datadoghq.com/products/ai/agent-observability/)
+product via the native `ddtrace.llmobs` SDK (`agent/lib/llmobs.py`), running
+**alongside** the OTel spans, not instead of them.
+
+| Span kind  | Call site                                          | Notes |
+|------------|-----------------------------------------------------|-------|
+| `workflow` | `agent.py` — one per job (`agent.run`)              | `session_id=JOB_ID`, set once; propagates to children |
+| `agent`    | `lib/llm.py` — one per `run_agent_loop()` call      | the tool-use loop |
+| `llm`      | `lib/llm.py` — one per actual model API call        | full input messages, output text, token usage |
+| `tool`     | `lib/tools.py` — one per tool dispatch              | `get_financials`/`get_valuation`/`get_earnings`, args + result/error |
+
+Full prompt/completion capture (no redaction) — the content involved is
+ticker/financial-snapshot data, not user PII.
+
+Gated on `DD_API_KEY` **and** the independent `DD_LLMOBS_ENABLED` (default on;
+`"false"` disables just this signal — it's the one that ships full prompt
+text). Runs in agentless mode (`agentless_enabled=True`, `ml_app=
+"stock-agent"`) since Daytona sandboxes have no local Datadog Agent. Flushed
+in `flush_observability()` before the sandbox self-deletes.
+
+Evaluations (quality/faithfulness scoring) are not yet wired up.
+
 ## Backends & configuration
 
 ### Sentry (separate project per service)
@@ -130,6 +155,8 @@ Facade modules: `lib/observability/metrics.ts` (Next.js), `agent/lib/metrics.py`
   auto-target Datadog's agentless intake (`https://otlp.<DD_SITE>/v1/<signal>`) with
   a `dd-api-key` header — no local Agent required.
   - `DD_EXPORTER=agent` opts into the local Datadog Agent on `:8126` instead.
+- `DD_LLMOBS_ENABLED`: independent kill switch for Agent Observability (see
+  above); defaults to on whenever `DD_API_KEY` is set.
 - Other vars: `DD_SITE`, `DD_SERVICE`, `DD_ENV`, `DD_TRACE_ENABLED`.
 
 ### Trace propagation
@@ -145,6 +172,7 @@ Facade modules: `lib/observability/metrics.ts` (Next.js), `agent/lib/metrics.py`
 - `lib/observability/exporters/datadog.ts` — dd-trace init (`initDatadogIfEnabled`)
 - `lib/observability/exporters/sentry.ts` — Sentry marker/setup
 - `agent/lib/observability.py` — Python OTel + Sentry/Datadog exporters + propagation
+- `agent/lib/llmobs.py` — Agent Observability (Datadog LLM Obs) span helpers
 
 **Configuration**
 - `instrumentation.ts` — Next.js `register` hook (initializes Datadog on `nodejs` runtime)
