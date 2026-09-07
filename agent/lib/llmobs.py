@@ -50,8 +50,19 @@ def workflow_span(name: str, session_id: str | None = None):
         yield None
         return
     from ddtrace.llmobs import LLMObs
-    with LLMObs.workflow(name=name, session_id=session_id) as span:
+    try:
+        cm = LLMObs.workflow(name=name, session_id=session_id)
+        span = cm.__enter__()
+    except Exception:
+        yield None
+        return
+    try:
         yield span
+    finally:
+        try:
+            cm.__exit__(None, None, None)
+        except Exception:
+            pass
 
 
 @contextlib.contextmanager
@@ -61,8 +72,19 @@ def agent_span(name: str):
         yield None
         return
     from ddtrace.llmobs import LLMObs
-    with LLMObs.agent(name=name) as span:
+    try:
+        cm = LLMObs.agent(name=name)
+        span = cm.__enter__()
+    except Exception:
+        yield None
+        return
+    try:
         yield span
+    finally:
+        try:
+            cm.__exit__(None, None, None)
+        except Exception:
+            pass
 
 
 @contextlib.contextmanager
@@ -72,8 +94,19 @@ def llm_span(name: str, model_name: str):
         yield None
         return
     from ddtrace.llmobs import LLMObs
-    with LLMObs.llm(name=name, model_name=model_name) as span:
+    try:
+        cm = LLMObs.llm(name=name, model_name=model_name)
+        span = cm.__enter__()
+    except Exception:
+        yield None
+        return
+    try:
         yield span
+    finally:
+        try:
+            cm.__exit__(None, None, None)
+        except Exception:
+            pass
 
 
 @contextlib.contextmanager
@@ -83,8 +116,19 @@ def tool_span(name: str):
         yield None
         return
     from ddtrace.llmobs import LLMObs
-    with LLMObs.tool(name=name) as span:
+    try:
+        cm = LLMObs.tool(name=name)
+        span = cm.__enter__()
+    except Exception:
+        yield None
+        return
+    try:
         yield span
+    finally:
+        try:
+            cm.__exit__(None, None, None)
+        except Exception:
+            pass
 
 
 def annotate(span, **kwargs) -> None:

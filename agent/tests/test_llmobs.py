@@ -185,3 +185,47 @@ def test_flush_llmobs_swallows_exception(monkeypatch):
     monkeypatch.setattr(ddllmobs, "LLMObs", fake_llmobs)
 
     llmobs.flush_llmobs(timeout_s=1.0)  # must not raise
+
+
+def test_workflow_span_yields_none_when_llmobs_raises_on_open(monkeypatch):
+    monkeypatch.setattr(llmobs, "_llmobs_inited", True)
+    fake_llmobs = MagicMock()
+    fake_llmobs.workflow.side_effect = RuntimeError("boom")
+    import ddtrace.llmobs as ddllmobs
+    monkeypatch.setattr(ddllmobs, "LLMObs", fake_llmobs)
+
+    with llmobs.workflow_span("agent.run", session_id="job-1") as span:
+        assert span is None  # must not raise
+
+
+def test_agent_span_yields_none_when_llmobs_raises_on_open(monkeypatch):
+    monkeypatch.setattr(llmobs, "_llmobs_inited", True)
+    fake_llmobs = MagicMock()
+    fake_llmobs.agent.side_effect = RuntimeError("boom")
+    import ddtrace.llmobs as ddllmobs
+    monkeypatch.setattr(ddllmobs, "LLMObs", fake_llmobs)
+
+    with llmobs.agent_span("llm.analyze") as span:
+        assert span is None  # must not raise
+
+
+def test_llm_span_yields_none_when_llmobs_raises_on_open(monkeypatch):
+    monkeypatch.setattr(llmobs, "_llmobs_inited", True)
+    fake_llmobs = MagicMock()
+    fake_llmobs.llm.side_effect = RuntimeError("boom")
+    import ddtrace.llmobs as ddllmobs
+    monkeypatch.setattr(ddllmobs, "LLMObs", fake_llmobs)
+
+    with llmobs.llm_span("llm.call", "gpt-4.1-mini") as span:
+        assert span is None  # must not raise
+
+
+def test_tool_span_yields_none_when_llmobs_raises_on_open(monkeypatch):
+    monkeypatch.setattr(llmobs, "_llmobs_inited", True)
+    fake_llmobs = MagicMock()
+    fake_llmobs.tool.side_effect = RuntimeError("boom")
+    import ddtrace.llmobs as ddllmobs
+    monkeypatch.setattr(ddllmobs, "LLMObs", fake_llmobs)
+
+    with llmobs.tool_span("tool.get_financials") as span:
+        assert span is None  # must not raise
