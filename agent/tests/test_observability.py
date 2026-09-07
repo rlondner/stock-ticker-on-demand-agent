@@ -186,3 +186,25 @@ def test_emit_log_bridges_to_otel_logs(monkeypatch):
     finally:
         # Restore the logger's handler list to what it was before this test.
         o._stdlib_logger.handlers = original_handlers
+
+
+def test_init_observability_calls_init_llmobs(monkeypatch):
+    import importlib, lib.observability as o
+    calls = []
+    monkeypatch.setattr("lib.llmobs.init_llmobs", lambda: calls.append("init") or True)
+    monkeypatch.setenv("JOB_ID", "job-llmobs-init")
+    importlib.reload(o)
+    o.init_observability(job_id="job-llmobs-init")
+    assert calls == ["init"]
+    o.flush_observability(timeout_s=1.0)
+
+
+def test_flush_observability_calls_flush_llmobs(monkeypatch):
+    import importlib, lib.observability as o
+    calls = []
+    monkeypatch.setattr("lib.llmobs.flush_llmobs", lambda timeout_s=5.0: calls.append(timeout_s))
+    monkeypatch.setenv("JOB_ID", "job-llmobs-flush")
+    importlib.reload(o)
+    o.init_observability(job_id="job-llmobs-flush")
+    o.flush_observability(timeout_s=2.5)
+    assert calls == [2.5]

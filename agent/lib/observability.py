@@ -107,6 +107,14 @@ def init_observability(job_id: str) -> None:
             _otlp_traces_inited = True
         _install_trace_instrumentors()
 
+    # === Datadog LLM Observability ===
+    # Separate signal from APM traces: native ddtrace.llmobs SDK, agentless
+    # mode (Daytona sandboxes have no local Agent), gated independently via
+    # DD_LLMOBS_ENABLED since this is the one signal that ships full prompt/
+    # completion text. See lib/llmobs.py.
+    from lib.llmobs import init_llmobs
+    init_llmobs()
+
     # Logs: OTel LoggerProvider bridged from stdlib; OTLP export via resolver.
     try:
         from opentelemetry.sdk._logs import LoggerProvider
@@ -254,3 +262,9 @@ def flush_observability(timeout_s: float = 5.0) -> None:
             ddtrace.tracer.shutdown(timeout=timeout_s)
         except Exception:
             pass
+
+    try:
+        from lib.llmobs import flush_llmobs
+        flush_llmobs(timeout_s=timeout_s)
+    except Exception:
+        pass

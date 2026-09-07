@@ -35,6 +35,7 @@ describe("spawnAnalysisSandbox", () => {
     delete process.env.SENTRY_DSN_AGENT;
     delete process.env.DD_API_KEY;
     delete process.env.DD_TRACE_ENABLED;
+    delete process.env.DD_LLMOBS_ENABLED;
     delete process.env.DD_EXPORTER;
     delete process.env.DD_OTLP_ENDPOINT;
     createMock.mockClear();
@@ -120,6 +121,16 @@ describe("spawnAnalysisSandbox", () => {
     span.end();
     const call = createMock.mock.calls.at(-1)![0] as any;
     expect(call.envVars.DD_TRACE_ENABLED).toBe("false");
+  });
+
+  it("forwards DD_LLMOBS_ENABLED only when set", async () => {
+    process.env.DD_LLMOBS_ENABLED = "false";
+    const { spawnAnalysisSandbox } = await import("@/lib/daytona");
+    const span = trace.getTracer("t").startSpan("p");
+    await spawnAnalysisSandbox("job-llmobs", span);
+    span.end();
+    const call = createMock.mock.calls.at(-1)![0] as any;
+    expect(call.envVars.DD_LLMOBS_ENABLED).toBe("false");
   });
 
   it("forwards DD_EXPORTER and DD_OTLP_ENDPOINT only when set", async () => {
