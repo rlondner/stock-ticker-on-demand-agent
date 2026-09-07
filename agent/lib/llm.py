@@ -14,6 +14,7 @@ from .finance import Snapshot, fetch_snapshot
 from . import metrics
 from .agent_loop import run_agent_loop
 from .tools import build_toolset
+from . import llmobs
 
 logger = logging.getLogger(__name__)
 
@@ -185,26 +186,55 @@ class OpenAIClient:
                         kw = {"model": self._model, "input": input}
                         if tools:
                             kw["tools"] = tools
-                        return self._client.responses.create(**kw)
+                        with llmobs.llm_span("llm.call", self._model) as lspan:
+                            resp = self._client.responses.create(**kw)
+                            usage = getattr(resp, "usage", None)
+                            llmobs.annotate(
+                                lspan,
+                                input_data=input,
+                                output_data=getattr(resp, "output_text", "") or "",
+                                metrics={
+                                    "input_tokens": getattr(usage, "input_tokens", 0) if usage else 0,
+                                    "output_tokens": getattr(usage, "output_tokens", 0) if usage else 0,
+                                },
+                            )
+                        return resp
                     _schemas, _registry = build_toolset(ticker)
-                    loop = run_agent_loop(
-                        _create, messages, tools=[{"type": "web_search"}, *_schemas],
-                        function_registry=_registry, max_iters=MAX_ITERS, timeout_s=LOOP_TIMEOUT_S,
-                    )
+                    with llmobs.agent_span("llm.analyze") as aspan:
+                        loop = run_agent_loop(
+                            _create, messages, tools=[{"type": "web_search"}, *_schemas],
+                            function_registry=_registry, max_iters=MAX_ITERS, timeout_s=LOOP_TIMEOUT_S,
+                        )
+                        llmobs.annotate(
+                            aspan,
+                            input_data=messages,
+                            output_data=loop.text,
+                            metadata={
+                                "iterations": loop.iterations,
+                                "tools_used": loop.tools_used,
+                                "budget_exhausted": loop.budget_exhausted,
+                            },
+                            metrics={"input_tokens": loop.tokens_in, "output_tokens": loop.tokens_out},
+                        )
                     text, tin, tout = loop.text, loop.tokens_in, loop.tokens_out
                     finish_reason = "budget_exhausted" if loop.budget_exhausted else "stop"
                     span.set_attribute("llm.iterations", loop.iterations)
                     span.set_attribute("llm.tools_used", ",".join(loop.tools_used))
                     tools_ran = bool(loop.tools_used)
                 else:
-                    resp = self._client.chat.completions.create(model=self._model, messages=messages)
-                    choice = resp.choices[0]
-                    text = choice.message.content
-                    finish_reason = choice.finish_reason
-                    usage = getattr(resp, "usage", None)
-                    tin = getattr(usage, "prompt_tokens", 0) if usage else 0
-                    tout = getattr(usage, "completion_tokens", 0) if usage else 0
-                    tools_ran = False
+                    with llmobs.llm_span("llm.call", self._model) as lspan:
+                        resp = self._client.chat.completions.create(model=self._model, messages=messages)
+                        choice = resp.choices[0]
+                        text = choice.message.content
+                        finish_reason = choice.finish_reason
+                        usage = getattr(resp, "usage", None)
+                        tin = getattr(usage, "prompt_tokens", 0) if usage else 0
+                        tout = getattr(usage, "completion_tokens", 0) if usage else 0
+                        tools_ran = False
+                        llmobs.annotate(
+                            lspan, input_data=messages, output_data=text or "",
+                            metrics={"input_tokens": tin, "output_tokens": tout},
+                        )
 
                 span.set_attribute("tokens_in", tin)
                 span.set_attribute("tokens_out", tout)

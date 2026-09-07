@@ -496,3 +496,81 @@ def test_analyze_passes_data_tools_and_web_search(monkeypatch):
     # the actual dispatch table (function_registry) is wired — not just schemas
     assert set(captured_registry.keys()) == {"get_financials", "get_valuation", "get_earnings"}
     assert all(callable(fn) for fn in captured_registry.values())
+
+
+def test_analyze_uses_llmobs_agent_and_llm_spans(monkeypatch):
+    import contextlib, importlib, lib.metrics as mtr, lib.llm as llm
+    importlib.reload(mtr)
+    monkeypatch.setattr(mtr, "record_llm_tokens", lambda *a, **k: None)
+    monkeypatch.setattr(mtr, "record_llm_call", lambda *a, **k: None)
+    monkeypatch.setattr(mtr, "record_llm_duration", lambda *a, **k: None)
+    importlib.reload(llm)
+
+    calls = {"agent": [], "llm": [], "annotate": []}
+
+    @contextlib.contextmanager
+    def fake_agent_span(name):
+        calls["agent"].append(name)
+        yield "AGENT_SPAN"
+
+    @contextlib.contextmanager
+    def fake_llm_span(name, model_name):
+        calls["llm"].append((name, model_name))
+        yield "LLM_SPAN"
+
+    monkeypatch.setattr(llm.llmobs, "agent_span", fake_agent_span)
+    monkeypatch.setattr(llm.llmobs, "llm_span", fake_llm_span)
+    monkeypatch.setattr(llm.llmobs, "annotate",
+                        lambda span, **kw: calls["annotate"].append((span, kw)))
+
+    client = llm.OpenAIClient.__new__(llm.OpenAIClient)
+    client._client = _FakeResponsesClient(_THESIS_JSON)
+    client._model = "gpt-4.1-mini"
+    client._use_responses_api = True
+
+    client.analyze("AAPL")
+
+    assert calls["agent"] == ["llm.analyze"]
+    assert calls["llm"] == [("llm.call", "gpt-4.1-mini")]
+    assert any(span == "AGENT_SPAN" for span, _ in calls["annotate"])
+    assert any(span == "LLM_SPAN" for span, _ in calls["annotate"])
+
+
+def test_chat_completions_uses_llmobs_llm_span_only(monkeypatch):
+    import contextlib, importlib, lib.metrics as mtr, lib.llm as llm
+    importlib.reload(mtr)
+    monkeypatch.setattr(mtr, "record_llm_tokens", lambda *a, **k: None)
+    monkeypatch.setattr(mtr, "record_llm_call", lambda *a, **k: None)
+    monkeypatch.setattr(mtr, "record_llm_duration", lambda *a, **k: None)
+    importlib.reload(llm)
+
+    calls = {"agent": [], "llm": []}
+
+    @contextlib.contextmanager
+    def fake_agent_span(name):
+        calls["agent"].append(name)
+        yield None
+
+    @contextlib.contextmanager
+    def fake_llm_span(name, model_name):
+        calls["llm"].append((name, model_name))
+        yield None
+
+    monkeypatch.setattr(llm.llmobs, "agent_span", fake_agent_span)
+    monkeypatch.setattr(llm.llmobs, "llm_span", fake_llm_span)
+    monkeypatch.setattr(llm.llmobs, "annotate", lambda *a, **k: None)
+
+    resp = MagicMock()
+    resp.choices = [MagicMock(message=MagicMock(content=_THESIS_JSON), finish_reason="stop")]
+    resp.usage = MagicMock(prompt_tokens=50, completion_tokens=25)
+    fake = MagicMock()
+    fake.chat.completions.create.return_value = resp
+    client = llm.OpenAIClient.__new__(llm.OpenAIClient)
+    client._client = fake
+    client._model = "gpt-4.1-mini"
+    client._use_responses_api = False
+
+    client.analyze("TSLA")
+
+    assert calls["agent"] == []
+    assert calls["llm"] == [("llm.call", "gpt-4.1-mini")]
