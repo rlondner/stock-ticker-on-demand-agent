@@ -41,6 +41,7 @@ def test_init_llmobs_enables_when_configured(monkeypatch):
         "site": "datadoghq.eu",
         "env": "staging",
         "service": "stock-agent-test",
+        "integrations_enabled": False,
     }]
 
 

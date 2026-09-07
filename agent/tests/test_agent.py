@@ -199,3 +199,51 @@ def test_agent_run_uses_llmobs_workflow_span(monkeypatch):
 
     assert calls["workflow"] == [("agent.run", "job-llmobs-wf")]
     assert any(span == "WORKFLOW_SPAN" for span, _ in calls["annotate"])
+
+
+def test_flush_and_self_delete_run_after_workflow_span_exits(monkeypatch):
+    """Regression test for the final-review finding: flush_observability() and
+    self_delete() must run AFTER the llmobs.workflow_span() context manager has
+    fully exited (i.e. after the workflow span — which carries session_id,
+    input/output data, and final_status — has closed), not from inside its
+    with-block's finally. Otherwise the explicit pre-teardown flush races
+    sandbox teardown via ddtrace's atexit hook instead of covering that span."""
+    import contextlib, importlib, agent as agent_module
+
+    events = []
+
+    @contextlib.contextmanager
+    def fake_workflow_span(name, session_id=None):
+        events.append("workflow_span.enter")
+        yield "WORKFLOW_SPAN"
+        events.append("workflow_span.exit")
+
+    def fake_flush_observability(*a, **kw):
+        events.append("flush_observability")
+
+    def fake_self_delete(sandbox_id=None):
+        events.append("self_delete")
+
+    importlib.reload(agent_module)
+    monkeypatch.setattr(agent_module.llmobs, "workflow_span", fake_workflow_span)
+    monkeypatch.setattr(agent_module.llmobs, "annotate", lambda *a, **kw: None)
+    monkeypatch.setattr(agent_module, "get_job",
+                        lambda job_id: {"ticker": "AAPL", "status": "pending", "sandbox_id": None})
+    monkeypatch.setattr(agent_module, "mark_running", lambda job_id: None)
+    monkeypatch.setattr(agent_module, "mark_complete", lambda job_id, recommendation, result: None)
+    monkeypatch.setattr(agent_module, "run_analysis", lambda ticker: {"recommendation": "buy"})
+    monkeypatch.setattr(agent_module, "self_delete", fake_self_delete)
+    monkeypatch.setattr(agent_module, "init_observability", lambda **kw: None)
+    monkeypatch.setattr(agent_module, "flush_observability", fake_flush_observability)
+    monkeypatch.setattr(agent_module._metrics, "record_job_completed", lambda *a, **kw: None)
+    monkeypatch.setattr(agent_module._metrics, "record_agent_run_duration", lambda *a, **kw: None)
+    monkeypatch.setattr(agent_module, "JOB_ID", "job-flush-order")
+
+    agent_module.main()
+
+    assert events == [
+        "workflow_span.enter",
+        "workflow_span.exit",
+        "flush_observability",
+        "self_delete",
+    ], events

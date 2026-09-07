@@ -44,6 +44,12 @@ def init_llmobs() -> bool:
             site=os.environ.get("DD_SITE", "datadoghq.com"),
             env=os.environ.get("DD_ENV", "development"),
             service=os.environ.get("DD_SERVICE", "stock-agent"),
+            # This codebase's LLMObs instrumentation is entirely manual and
+            # deliberate (see llm_span() calls in llm.py). ddtrace's own
+            # integrations_enabled=True default auto-patches the openai SDK and
+            # would emit a SECOND "llm" span for every model call, nested inside
+            # our own — doubling tokens/cost in the UI. Keep it off.
+            integrations_enabled=False,
         )
     except Exception:
         return False

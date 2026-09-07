@@ -536,6 +536,80 @@ def test_analyze_uses_llmobs_agent_and_llm_spans(monkeypatch):
     assert any(span == "LLM_SPAN" for span, _ in calls["annotate"])
 
 
+def test_llm_span_annotate_uses_plain_dicts_on_later_tool_loop_iteration(monkeypatch):
+    """Regression test: agent_loop.run_agent_loop appends raw SDK objects (e.g.
+    a function_call item) to the conversation, not just plain dicts. Passing
+    that conversation straight to LLMObs.annotate makes ddtrace silently drop
+    the ENTIRE input_data for that span. lib.llm._llmobs_messages must normalize
+    every item into a plain dict before annotate() is called, so a later
+    iteration (after at least one tool call) still gets real, complete input."""
+    import contextlib, importlib, lib.metrics as mtr, lib.llm as llm
+    from types import SimpleNamespace
+    importlib.reload(mtr)
+    monkeypatch.setattr(mtr, "record_llm_tokens", lambda *a, **k: None)
+    monkeypatch.setattr(mtr, "record_llm_call", lambda *a, **k: None)
+    monkeypatch.setattr(mtr, "record_llm_duration", lambda *a, **k: None)
+    importlib.reload(llm)
+
+    monkeypatch.setattr(
+        llm, "build_toolset",
+        lambda ticker: (
+            [{"type": "function", "name": "get_financials", "description": "d",
+              "parameters": {"type": "object", "properties": {}}}],
+            {"get_financials": lambda args: {"revenue": 1}},
+        ),
+    )
+
+    call_count = {"n": 0}
+
+    class _FakeToolLoopResponses:
+        def create(self, **kw):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                # A raw SDK-style object (not a dict), like a real
+                # ResponseFunctionToolCall — this is what agent_loop.py appends
+                # to `conversation` via `conversation.append(call)`.
+                call = SimpleNamespace(type="function_call", name="get_financials",
+                                       arguments="{}", call_id="call-1")
+                return SimpleNamespace(output=[call], output_text="",
+                                       usage=SimpleNamespace(input_tokens=5, output_tokens=5))
+            return SimpleNamespace(output=[], output_text=_THESIS_JSON,
+                                   usage=SimpleNamespace(input_tokens=5, output_tokens=5))
+
+    llm_annotations = []
+
+    @contextlib.contextmanager
+    def fake_llm_span(name, model_name):
+        yield "LLM_SPAN"
+
+    def fake_annotate(span, **kw):
+        if span == "LLM_SPAN":
+            llm_annotations.append(kw)
+
+    monkeypatch.setattr(llm.llmobs, "llm_span", fake_llm_span)
+    monkeypatch.setattr(llm.llmobs, "annotate", fake_annotate)
+
+    client = llm.OpenAIClient.__new__(llm.OpenAIClient)
+    client._client = SimpleNamespace(responses=_FakeToolLoopResponses())
+    client._model = "gpt-4.1-mini"
+    client._use_responses_api = True
+
+    client.analyze("AAPL")
+
+    assert call_count["n"] == 2  # first call returned a function_call, second is the final answer
+    assert len(llm_annotations) == 2
+
+    second_input = llm_annotations[1]["input_data"]
+    assert isinstance(second_input, list)
+    assert len(second_input) > 0
+    # No item may be dropped or left as a raw SDK object.
+    assert all(isinstance(m, dict) for m in second_input)
+    assert all("content" in m for m in second_input)
+    # The non-dict function_call item's information must be preserved, not
+    # silently discarded.
+    assert any("get_financials" in json.dumps(m) for m in second_input)
+
+
 def test_chat_completions_uses_llmobs_llm_span_only(monkeypatch):
     import contextlib, importlib, lib.metrics as mtr, lib.llm as llm
     importlib.reload(mtr)

@@ -113,7 +113,7 @@ def init_observability(job_id: str) -> None:
     # DD_LLMOBS_ENABLED since this is the one signal that ships full prompt/
     # completion text. See lib/llmobs.py.
     from lib.llmobs import init_llmobs
-    init_llmobs()
+    init_llmobs()  # init_llmobs() never raises by contract — see llmobs.py
 
     # Logs: OTel LoggerProvider bridged from stdlib; OTLP export via resolver.
     try:

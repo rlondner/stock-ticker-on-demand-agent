@@ -142,6 +142,27 @@ def _grounding(tools_ran: bool, thesis: "Thesis") -> str:
     return "researched" if has_citation else "limited"
 
 
+def _llmobs_messages(items):
+    """Normalize a Responses-API conversation (a mix of plain dicts like
+    {"type": "function_call_output", ...} and OpenAI SDK objects like
+    ResponseFunctionToolCall, as built up by agent_loop.run_agent_loop) into a
+    list of plain dict messages. LLMObs.annotate silently drops the ENTIRE
+    input_data list if any item in it isn't a dict, so every non-dict item must
+    be converted rather than passed through as-is."""
+    out = []
+    for item in items:
+        if isinstance(item, dict):
+            content = item.get("content")
+            out.append(item if content is not None else
+                       {"role": item.get("role", "assistant"),
+                        "content": json.dumps(item, default=str)})
+        else:
+            dump = getattr(item, "model_dump", None)
+            out.append({"role": "assistant",
+                       "content": json.dumps(dump() if dump else str(item), default=str)})
+    return out
+
+
 class OpenAIClient:
     def __init__(self, model: str | None = None):
         self._client = OpenAI(
@@ -191,7 +212,7 @@ class OpenAIClient:
                             usage = getattr(resp, "usage", None)
                             llmobs.annotate(
                                 lspan,
-                                input_data=input,
+                                input_data=_llmobs_messages(input),
                                 output_data=getattr(resp, "output_text", "") or "",
                                 metrics={
                                     "input_tokens": getattr(usage, "input_tokens", 0) if usage else 0,

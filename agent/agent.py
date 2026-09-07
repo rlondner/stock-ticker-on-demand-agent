@@ -58,55 +58,63 @@ def main() -> None:
 
     final_status = "unknown"
     _start = time.monotonic()
-    with tracer.start_as_current_span("agent.run") as span, \
-         llmobs.workflow_span("agent.run", session_id=JOB_ID) as lspan:
-        span.set_attribute("host", get_host())
-        span.set_attribute("job_id", JOB_ID)
-        job = None
-        try:
-            job = get_job(JOB_ID)
-            if job is None or job["status"] != "pending":
-                print(f"job {JOB_ID} not pending (status={job and job['status']}); exiting", file=sys.stderr)
-                final_status = "skipped"
-                return
-            span.set_attribute("ticker", job["ticker"])
-            llmobs.annotate(lspan, input_data={"job_id": JOB_ID, "ticker": job["ticker"]})
-
-            mark_running(JOB_ID)
-            result = run_analysis(ticker=job["ticker"])
-            mark_complete(JOB_ID, recommendation=result["recommendation"], result=result)
-            span.set_attribute("final_status", "complete")
-            final_status = "complete"
-            llmobs.annotate(lspan, output_data=result, metadata={"final_status": "complete"})
-            _metrics.record_job_completed("complete", job["ticker"])
-            _metrics.record_agent_run_duration("complete", job["ticker"], (time.monotonic() - _start) * 1000)
-        except Exception as e:
-            record_error(span, e)
-            mark_failed(JOB_ID, error=f"{type(e).__name__}: {e}\n{traceback.format_exc()}")
-            span.set_attribute("final_status", "failed")
-            llmobs.annotate(lspan, metadata={"final_status": "failed", "error": f"{type(e).__name__}: {e}"})
-            _ticker = job["ticker"] if job else "unknown"
-            _metrics.record_job_completed("failed", _ticker)
-            _metrics.record_agent_run_duration("failed", _ticker, (time.monotonic() - _start) * 1000)
-            final_status = "failed"
-            raise
-        finally:
-            duration_ms = (time.perf_counter() - started_at) * 1000
-            emit_log(
-                "info",
-                "agent.finished",
-                job_id=JOB_ID,
-                final_status=final_status,
-                duration_ms=duration_ms,
-            )
-            flush_observability()
+    job = None
+    # The outer try/finally wraps the whole `with` statement (rather than living
+    # inside it) so that flush_observability()/self_delete() below only run AFTER
+    # both spans (agent.run and the LLMObs workflow span, which carries
+    # session_id/input/output/final_status) have fully closed. Doing the flush
+    # while the workflow span is still open means the explicit pre-teardown
+    # flush races sandbox teardown via ddtrace's atexit hook instead of actually
+    # covering that span.
+    try:
+        with tracer.start_as_current_span("agent.run") as span, \
+             llmobs.workflow_span("agent.run", session_id=JOB_ID) as lspan:
+            span.set_attribute("host", get_host())
+            span.set_attribute("job_id", JOB_ID)
             try:
-                # Prefer the sandbox_id from the job row (written by NextJS after dt.create).
-                # Fall back to the env var inside self_delete() for any custom setup.
-                sandbox_id = (job["sandbox_id"] if job and "sandbox_id" in job else None)
-                self_delete(sandbox_id=sandbox_id)
-            except Exception:
-                pass
+                job = get_job(JOB_ID)
+                if job is None or job["status"] != "pending":
+                    print(f"job {JOB_ID} not pending (status={job and job['status']}); exiting", file=sys.stderr)
+                    final_status = "skipped"
+                    return
+                span.set_attribute("ticker", job["ticker"])
+                llmobs.annotate(lspan, input_data={"job_id": JOB_ID, "ticker": job["ticker"]})
+
+                mark_running(JOB_ID)
+                result = run_analysis(ticker=job["ticker"])
+                mark_complete(JOB_ID, recommendation=result["recommendation"], result=result)
+                span.set_attribute("final_status", "complete")
+                final_status = "complete"
+                llmobs.annotate(lspan, output_data=result, metadata={"final_status": "complete"})
+                _metrics.record_job_completed("complete", job["ticker"])
+                _metrics.record_agent_run_duration("complete", job["ticker"], (time.monotonic() - _start) * 1000)
+            except Exception as e:
+                record_error(span, e)
+                mark_failed(JOB_ID, error=f"{type(e).__name__}: {e}\n{traceback.format_exc()}")
+                span.set_attribute("final_status", "failed")
+                llmobs.annotate(lspan, metadata={"final_status": "failed", "error": f"{type(e).__name__}: {e}"})
+                _ticker = job["ticker"] if job else "unknown"
+                _metrics.record_job_completed("failed", _ticker)
+                _metrics.record_agent_run_duration("failed", _ticker, (time.monotonic() - _start) * 1000)
+                final_status = "failed"
+                raise
+    finally:
+        duration_ms = (time.perf_counter() - started_at) * 1000
+        emit_log(
+            "info",
+            "agent.finished",
+            job_id=JOB_ID,
+            final_status=final_status,
+            duration_ms=duration_ms,
+        )
+        flush_observability()
+        try:
+            # Prefer the sandbox_id from the job row (written by NextJS after dt.create).
+            # Fall back to the env var inside self_delete() for any custom setup.
+            sandbox_id = (job["sandbox_id"] if job and "sandbox_id" in job else None)
+            self_delete(sandbox_id=sandbox_id)
+        except Exception:
+            pass
 
 if __name__ == "__main__":
     main()
