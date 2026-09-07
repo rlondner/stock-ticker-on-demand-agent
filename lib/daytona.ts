@@ -4,6 +4,7 @@ import { type Span } from "@opentelemetry/api";
 import * as Sentry from "@sentry/nextjs";
 import { injectTraceparent, forwardIfSet, datadogBlockIfEnabled } from "./runtime/env";
 import { ddLog, ddMetric } from "./observability/exporters/datadog";
+import type { Depth } from "./db/schema";
 
 let _dt: Daytona | undefined;
 function client(): Daytona {
@@ -15,9 +16,18 @@ function client(): Daytona {
   return _dt;
 }
 
-export async function spawnAnalysisSandbox(jobId: string, parentSpan: Span): Promise<string> {
+function autoDeleteIntervalFor(depth: Depth): number {
+  const key = { quick: "DAYTONA_AUTO_DELETE_QUICK_S", deep: "DAYTONA_AUTO_DELETE_DEEP_S", full: "DAYTONA_AUTO_DELETE_FULL_S" }[depth];
+  const fallback = { quick: 600, deep: 900, full: 1500 }[depth];
+  const raw = process.env[key];
+  const parsed = raw ? Number(raw) : NaN;
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+export async function spawnAnalysisSandbox(jobId: string, depth: Depth, parentSpan: Span): Promise<string> {
   const env: Record<string, string> = {
     JOB_ID: jobId,
+    DEPTH: depth,
     NEON_DATABASE_URL: process.env.NEON_DATABASE_URL!,
     OPENAI_API_KEY: process.env.OPENAI_API_KEY!,
     DAYTONA_API_KEY: process.env.DAYTONA_API_KEY!,
@@ -25,6 +35,7 @@ export async function spawnAnalysisSandbox(jobId: string, parentSpan: Span): Pro
     ...forwardIfSet("OPENAI_API_URL"),
     ...forwardIfSet("OPENAI_MODEL"),
     ...forwardIfSet("OPENAI_USE_RESPONSES_API"),
+    ...forwardIfSet("YOUDOTCOM_API_KEY"),
     ...forwardIfSet("SENTRY_DSN_AGENT"),
     ...forwardIfSet("DD_TRACE_ENABLED"),
     ...forwardIfSet("DD_EXPORTER"),
@@ -49,7 +60,7 @@ export async function spawnAnalysisSandbox(jobId: string, parentSpan: Span): Pro
     snapshot: "stock-agent:v1",
     envVars: env,
     autoStopInterval: 0,
-    autoDeleteInterval: 600,
+    autoDeleteInterval: autoDeleteIntervalFor(depth),
   });
   const durationMs = Date.now() - startedAt;
 

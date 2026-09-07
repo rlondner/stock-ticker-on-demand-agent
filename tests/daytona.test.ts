@@ -37,6 +37,9 @@ describe("spawnAnalysisSandbox", () => {
     delete process.env.DD_TRACE_ENABLED;
     delete process.env.DD_EXPORTER;
     delete process.env.DD_OTLP_ENDPOINT;
+    delete process.env.DAYTONA_AUTO_DELETE_DEEP_S;
+    delete process.env.DAYTONA_AUTO_DELETE_FULL_S;
+    delete process.env.YOUDOTCOM_API_KEY;
     createMock.mockClear();
     createSessionMock.mockClear();
     executeSessionCommandMock.mockClear();
@@ -45,7 +48,7 @@ describe("spawnAnalysisSandbox", () => {
   it("kicks off python /app/agent.py in a background session", async () => {
     const { spawnAnalysisSandbox } = await import("@/lib/daytona");
     const span = trace.getTracer("t").startSpan("p");
-    await spawnAnalysisSandbox("job-kick", span);
+    await spawnAnalysisSandbox("job-kick", "quick", span);
     span.end();
     expect(createSessionMock).toHaveBeenCalledWith("agent-job-kick");
     expect(executeSessionCommandMock).toHaveBeenCalledWith("agent-job-kick", {
@@ -57,7 +60,7 @@ describe("spawnAnalysisSandbox", () => {
   it("returns the sandbox id and passes JOB_ID + TRACEPARENT", async () => {
     const { spawnAnalysisSandbox } = await import("@/lib/daytona");
     const span = trace.getTracer("t").startSpan("parent");
-    const id = await spawnAnalysisSandbox("job-abc", span);
+    const id = await spawnAnalysisSandbox("job-abc", "quick", span);
     span.end();
     expect(id).toBe("sb-12345");
     const call = createMock.mock.calls[0][0] as any;
@@ -74,7 +77,7 @@ describe("spawnAnalysisSandbox", () => {
     process.env.OPENAI_API_URL = "https://my-proxy.example.com/v1";
     const { spawnAnalysisSandbox } = await import("@/lib/daytona");
     const span = trace.getTracer("t").startSpan("p");
-    await spawnAnalysisSandbox("job-url", span);
+    await spawnAnalysisSandbox("job-url", "quick", span);
     span.end();
     const call = createMock.mock.calls.at(-1)![0] as any;
     expect(call.envVars.OPENAI_API_URL).toBe("https://my-proxy.example.com/v1");
@@ -84,7 +87,7 @@ describe("spawnAnalysisSandbox", () => {
     process.env.OPENAI_MODEL = "gpt-4.1";
     const { spawnAnalysisSandbox } = await import("@/lib/daytona");
     const span = trace.getTracer("t").startSpan("p");
-    await spawnAnalysisSandbox("job-model", span);
+    await spawnAnalysisSandbox("job-model", "quick", span);
     span.end();
     const call = createMock.mock.calls.at(-1)![0] as any;
     expect(call.envVars.OPENAI_MODEL).toBe("gpt-4.1");
@@ -94,7 +97,7 @@ describe("spawnAnalysisSandbox", () => {
     process.env.SENTRY_DSN_AGENT = "https://x@sentry.io/1";
     const { spawnAnalysisSandbox } = await import("@/lib/daytona");
     const span = trace.getTracer("t").startSpan("p");
-    await spawnAnalysisSandbox("job-2", span);
+    await spawnAnalysisSandbox("job-2", "quick", span);
     span.end();
     const call = createMock.mock.calls.at(-1)![0] as any;
     expect(call.envVars.SENTRY_DSN_AGENT).toBe("https://x@sentry.io/1");
@@ -104,7 +107,7 @@ describe("spawnAnalysisSandbox", () => {
     process.env.DD_API_KEY = "dd-key";
     const { spawnAnalysisSandbox } = await import("@/lib/daytona");
     const span = trace.getTracer("t").startSpan("p");
-    await spawnAnalysisSandbox("job-3", span);
+    await spawnAnalysisSandbox("job-3", "quick", span);
     span.end();
     const call = createMock.mock.calls.at(-1)![0] as any;
     expect(call.envVars.DD_API_KEY).toBe("dd-key");
@@ -116,7 +119,7 @@ describe("spawnAnalysisSandbox", () => {
     process.env.DD_TRACE_ENABLED = "false";
     const { spawnAnalysisSandbox } = await import("@/lib/daytona");
     const span = trace.getTracer("t").startSpan("p");
-    await spawnAnalysisSandbox("job-dd-disabled", span);
+    await spawnAnalysisSandbox("job-dd-disabled", "quick", span);
     span.end();
     const call = createMock.mock.calls.at(-1)![0] as any;
     expect(call.envVars.DD_TRACE_ENABLED).toBe("false");
@@ -127,10 +130,52 @@ describe("spawnAnalysisSandbox", () => {
     process.env.DD_OTLP_ENDPOINT = "https://trace.agent.datadoghq.com/v1/traces";
     const { spawnAnalysisSandbox } = await import("@/lib/daytona");
     const span = trace.getTracer("t").startSpan("p");
-    await spawnAnalysisSandbox("job-dd-otlp", span);
+    await spawnAnalysisSandbox("job-dd-otlp", "quick", span);
     span.end();
     const call = createMock.mock.calls.at(-1)![0] as any;
     expect(call.envVars.DD_EXPORTER).toBe("otlp");
     expect(call.envVars.DD_OTLP_ENDPOINT).toBe("https://trace.agent.datadoghq.com/v1/traces");
+  });
+
+  it("sets DEPTH in the sandbox env and defaults autoDeleteInterval to 600 for 'quick'", async () => {
+    const { spawnAnalysisSandbox } = await import("@/lib/daytona");
+    const span = trace.getTracer("t").startSpan("p");
+    await spawnAnalysisSandbox("job-quick", "quick", span);
+    span.end();
+    const call = createMock.mock.calls.at(-1)![0] as any;
+    expect(call.envVars.DEPTH).toBe("quick");
+    expect(call.autoDeleteInterval).toBe(600);
+  });
+
+  it("uses DAYTONA_AUTO_DELETE_DEEP_S for 'deep'", async () => {
+    process.env.DAYTONA_AUTO_DELETE_DEEP_S = "930";
+    const { spawnAnalysisSandbox } = await import("@/lib/daytona");
+    const span = trace.getTracer("t").startSpan("p");
+    await spawnAnalysisSandbox("job-deep", "deep", span);
+    span.end();
+    const call = createMock.mock.calls.at(-1)![0] as any;
+    expect(call.envVars.DEPTH).toBe("deep");
+    expect(call.autoDeleteInterval).toBe(930);
+  });
+
+  it("uses DAYTONA_AUTO_DELETE_FULL_S for 'full'", async () => {
+    process.env.DAYTONA_AUTO_DELETE_FULL_S = "1530";
+    const { spawnAnalysisSandbox } = await import("@/lib/daytona");
+    const span = trace.getTracer("t").startSpan("p");
+    await spawnAnalysisSandbox("job-full", "full", span);
+    span.end();
+    const call = createMock.mock.calls.at(-1)![0] as any;
+    expect(call.envVars.DEPTH).toBe("full");
+    expect(call.autoDeleteInterval).toBe(1530);
+  });
+
+  it("forwards YOUDOTCOM_API_KEY only when set", async () => {
+    process.env.YOUDOTCOM_API_KEY = "ydc-sk-test";
+    const { spawnAnalysisSandbox } = await import("@/lib/daytona");
+    const span = trace.getTracer("t").startSpan("p");
+    await spawnAnalysisSandbox("job-youcom", "deep", span);
+    span.end();
+    const call = createMock.mock.calls.at(-1)![0] as any;
+    expect(call.envVars.YOUDOTCOM_API_KEY).toBe("ydc-sk-test");
   });
 });
