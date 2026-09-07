@@ -7,8 +7,21 @@ Observability UI, not a replacement for the unified OTel/Sentry/Datadog-APM
 pipeline."""
 import contextlib
 import os
+import sys
 
 _llmobs_inited = False
+
+
+def _exit_span(cm, exc_type, exc_value, tb) -> bool:
+    """Call cm.__exit__ with the given exception info, swallowing any
+    exception __exit__ itself raises (telemetry teardown must never break
+    the caller). Returns whether __exit__ asked to suppress the exception,
+    exactly like a native `with` statement would (False if __exit__ raised
+    or returned a falsy value)."""
+    try:
+        return bool(cm.__exit__(exc_type, exc_value, tb))
+    except Exception:
+        return False
 
 
 def init_llmobs() -> bool:
@@ -58,11 +71,12 @@ def workflow_span(name: str, session_id: str | None = None):
         return
     try:
         yield span
-    finally:
-        try:
-            cm.__exit__(None, None, None)
-        except Exception:
-            pass
+    except BaseException:
+        exc_type, exc_value, tb = sys.exc_info()
+        if not _exit_span(cm, exc_type, exc_value, tb):
+            raise
+    else:
+        _exit_span(cm, None, None, None)
 
 
 @contextlib.contextmanager
@@ -80,11 +94,12 @@ def agent_span(name: str):
         return
     try:
         yield span
-    finally:
-        try:
-            cm.__exit__(None, None, None)
-        except Exception:
-            pass
+    except BaseException:
+        exc_type, exc_value, tb = sys.exc_info()
+        if not _exit_span(cm, exc_type, exc_value, tb):
+            raise
+    else:
+        _exit_span(cm, None, None, None)
 
 
 @contextlib.contextmanager
@@ -102,11 +117,12 @@ def llm_span(name: str, model_name: str):
         return
     try:
         yield span
-    finally:
-        try:
-            cm.__exit__(None, None, None)
-        except Exception:
-            pass
+    except BaseException:
+        exc_type, exc_value, tb = sys.exc_info()
+        if not _exit_span(cm, exc_type, exc_value, tb):
+            raise
+    else:
+        _exit_span(cm, None, None, None)
 
 
 @contextlib.contextmanager
@@ -124,11 +140,12 @@ def tool_span(name: str):
         return
     try:
         yield span
-    finally:
-        try:
-            cm.__exit__(None, None, None)
-        except Exception:
-            pass
+    except BaseException:
+        exc_type, exc_value, tb = sys.exc_info()
+        if not _exit_span(cm, exc_type, exc_value, tb):
+            raise
+    else:
+        _exit_span(cm, None, None, None)
 
 
 def annotate(span, **kwargs) -> None:

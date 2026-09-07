@@ -229,3 +229,252 @@ def test_tool_span_yields_none_when_llmobs_raises_on_open(monkeypatch):
 
     with llmobs.tool_span("tool.get_financials") as span:
         assert span is None  # must not raise
+
+
+def _fake_cm_direct(sentinel):
+    """A MagicMock-based fake context manager with directly controllable
+    __enter__/__exit__, so tests can assert on the exact exception info
+    __exit__ was called with."""
+    fake_cm = MagicMock()
+    fake_cm.__enter__ = MagicMock(return_value=sentinel)
+    fake_cm.__exit__ = MagicMock(return_value=False)
+    return fake_cm
+
+
+def _install_fake_cm(monkeypatch, attr_name, fake_cm):
+    fake_llmobs = MagicMock()
+    setattr(fake_llmobs, attr_name, MagicMock(return_value=fake_cm))
+    import ddtrace.llmobs as ddllmobs
+    monkeypatch.setattr(ddllmobs, "LLMObs", fake_llmobs)
+
+
+# (span_context_manager_factory, LLMObs attribute name to mock)
+_SPAN_CASES = [
+    (lambda: llmobs.workflow_span("agent.run", session_id="job-1"), "workflow"),
+    (lambda: llmobs.agent_span("llm.analyze"), "agent"),
+    (lambda: llmobs.llm_span("llm.call", "gpt-4.1-mini"), "llm"),
+    (lambda: llmobs.tool_span("tool.get_financials"), "tool"),
+]
+
+
+def test_workflow_span_propagates_body_exception_and_forwards_exc_info(monkeypatch):
+    monkeypatch.setattr(llmobs, "_llmobs_inited", True)
+    fake_cm = _fake_cm_direct("SPAN")
+    _install_fake_cm(monkeypatch, "workflow", fake_cm)
+
+    class Boom(RuntimeError):
+        pass
+
+    raised = None
+    try:
+        with llmobs.workflow_span("agent.run", session_id="job-1") as span:
+            assert span == "SPAN"
+            raise Boom("body failed")
+    except Boom as e:
+        raised = e
+    assert raised is not None, "the body's exception must propagate to the caller"
+
+    fake_cm.__exit__.assert_called_once()
+    exc_type, exc_value, tb = fake_cm.__exit__.call_args.args
+    assert exc_type is Boom
+    assert isinstance(exc_value, Boom)
+    assert tb is not None
+
+
+def test_agent_span_propagates_body_exception_and_forwards_exc_info(monkeypatch):
+    monkeypatch.setattr(llmobs, "_llmobs_inited", True)
+    fake_cm = _fake_cm_direct("SPAN")
+    _install_fake_cm(monkeypatch, "agent", fake_cm)
+
+    class Boom(RuntimeError):
+        pass
+
+    raised = None
+    try:
+        with llmobs.agent_span("llm.analyze") as span:
+            assert span == "SPAN"
+            raise Boom("body failed")
+    except Boom as e:
+        raised = e
+    assert raised is not None
+
+    fake_cm.__exit__.assert_called_once()
+    exc_type, exc_value, tb = fake_cm.__exit__.call_args.args
+    assert exc_type is Boom
+    assert isinstance(exc_value, Boom)
+    assert tb is not None
+
+
+def test_llm_span_propagates_body_exception_and_forwards_exc_info(monkeypatch):
+    monkeypatch.setattr(llmobs, "_llmobs_inited", True)
+    fake_cm = _fake_cm_direct("SPAN")
+    _install_fake_cm(monkeypatch, "llm", fake_cm)
+
+    class Boom(RuntimeError):
+        pass
+
+    raised = None
+    try:
+        with llmobs.llm_span("llm.call", "gpt-4.1-mini") as span:
+            assert span == "SPAN"
+            raise Boom("body failed")
+    except Boom as e:
+        raised = e
+    assert raised is not None
+
+    fake_cm.__exit__.assert_called_once()
+    exc_type, exc_value, tb = fake_cm.__exit__.call_args.args
+    assert exc_type is Boom
+    assert isinstance(exc_value, Boom)
+    assert tb is not None
+
+
+def test_tool_span_propagates_body_exception_and_forwards_exc_info(monkeypatch):
+    monkeypatch.setattr(llmobs, "_llmobs_inited", True)
+    fake_cm = _fake_cm_direct("SPAN")
+    _install_fake_cm(monkeypatch, "tool", fake_cm)
+
+    class Boom(RuntimeError):
+        pass
+
+    raised = None
+    try:
+        with llmobs.tool_span("tool.get_financials") as span:
+            assert span == "SPAN"
+            raise Boom("body failed")
+    except Boom as e:
+        raised = e
+    assert raised is not None
+
+    fake_cm.__exit__.assert_called_once()
+    exc_type, exc_value, tb = fake_cm.__exit__.call_args.args
+    assert exc_type is Boom
+    assert isinstance(exc_value, Boom)
+    assert tb is not None
+
+
+def test_workflow_span_swallows_exit_failure_on_normal_exit(monkeypatch):
+    monkeypatch.setattr(llmobs, "_llmobs_inited", True)
+    fake_cm = _fake_cm_direct("SPAN")
+    fake_cm.__exit__.side_effect = RuntimeError("exit boom")
+    _install_fake_cm(monkeypatch, "workflow", fake_cm)
+
+    with llmobs.workflow_span("agent.run", session_id="job-1") as span:
+        assert span == "SPAN"
+    # must not raise
+
+
+def test_agent_span_swallows_exit_failure_on_normal_exit(monkeypatch):
+    monkeypatch.setattr(llmobs, "_llmobs_inited", True)
+    fake_cm = _fake_cm_direct("SPAN")
+    fake_cm.__exit__.side_effect = RuntimeError("exit boom")
+    _install_fake_cm(monkeypatch, "agent", fake_cm)
+
+    with llmobs.agent_span("llm.analyze") as span:
+        assert span == "SPAN"
+    # must not raise
+
+
+def test_llm_span_swallows_exit_failure_on_normal_exit(monkeypatch):
+    monkeypatch.setattr(llmobs, "_llmobs_inited", True)
+    fake_cm = _fake_cm_direct("SPAN")
+    fake_cm.__exit__.side_effect = RuntimeError("exit boom")
+    _install_fake_cm(monkeypatch, "llm", fake_cm)
+
+    with llmobs.llm_span("llm.call", "gpt-4.1-mini") as span:
+        assert span == "SPAN"
+    # must not raise
+
+
+def test_tool_span_swallows_exit_failure_on_normal_exit(monkeypatch):
+    monkeypatch.setattr(llmobs, "_llmobs_inited", True)
+    fake_cm = _fake_cm_direct("SPAN")
+    fake_cm.__exit__.side_effect = RuntimeError("exit boom")
+    _install_fake_cm(monkeypatch, "tool", fake_cm)
+
+    with llmobs.tool_span("tool.get_financials") as span:
+        assert span == "SPAN"
+    # must not raise
+
+
+def test_workflow_span_preserves_original_exception_when_exit_also_raises(monkeypatch):
+    monkeypatch.setattr(llmobs, "_llmobs_inited", True)
+    fake_cm = _fake_cm_direct("SPAN")
+    fake_cm.__exit__.side_effect = RuntimeError("exit boom")
+    _install_fake_cm(monkeypatch, "workflow", fake_cm)
+
+    class Original(RuntimeError):
+        pass
+
+    raised = None
+    try:
+        with llmobs.workflow_span("agent.run", session_id="job-1") as span:
+            raise Original("original failure")
+    except Exception as e:
+        raised = e
+    assert isinstance(raised, Original), "the original exception must win, not the exit failure"
+
+
+def test_agent_span_preserves_original_exception_when_exit_also_raises(monkeypatch):
+    monkeypatch.setattr(llmobs, "_llmobs_inited", True)
+    fake_cm = _fake_cm_direct("SPAN")
+    fake_cm.__exit__.side_effect = RuntimeError("exit boom")
+    _install_fake_cm(monkeypatch, "agent", fake_cm)
+
+    class Original(RuntimeError):
+        pass
+
+    raised = None
+    try:
+        with llmobs.agent_span("llm.analyze") as span:
+            raise Original("original failure")
+    except Exception as e:
+        raised = e
+    assert isinstance(raised, Original)
+
+
+def test_llm_span_preserves_original_exception_when_exit_also_raises(monkeypatch):
+    monkeypatch.setattr(llmobs, "_llmobs_inited", True)
+    fake_cm = _fake_cm_direct("SPAN")
+    fake_cm.__exit__.side_effect = RuntimeError("exit boom")
+    _install_fake_cm(monkeypatch, "llm", fake_cm)
+
+    class Original(RuntimeError):
+        pass
+
+    raised = None
+    try:
+        with llmobs.llm_span("llm.call", "gpt-4.1-mini") as span:
+            raise Original("original failure")
+    except Exception as e:
+        raised = e
+    assert isinstance(raised, Original)
+
+
+def test_tool_span_preserves_original_exception_when_exit_also_raises(monkeypatch):
+    monkeypatch.setattr(llmobs, "_llmobs_inited", True)
+    fake_cm = _fake_cm_direct("SPAN")
+    fake_cm.__exit__.side_effect = RuntimeError("exit boom")
+    _install_fake_cm(monkeypatch, "tool", fake_cm)
+
+    class Original(RuntimeError):
+        pass
+
+    raised = None
+    try:
+        with llmobs.tool_span("tool.get_financials") as span:
+            raise Original("original failure")
+    except Exception as e:
+        raised = e
+    assert isinstance(raised, Original)
+
+
+def test_workflow_span_respects_exit_suppress_true(monkeypatch):
+    monkeypatch.setattr(llmobs, "_llmobs_inited", True)
+    fake_cm = _fake_cm_direct("SPAN")
+    fake_cm.__exit__.return_value = True  # ask to suppress, like a native `with`
+    _install_fake_cm(monkeypatch, "workflow", fake_cm)
+
+    with llmobs.workflow_span("agent.run", session_id="job-1") as span:
+        raise RuntimeError("should be suppressed")
+    # must not raise: __exit__ returning True suppresses the exception
