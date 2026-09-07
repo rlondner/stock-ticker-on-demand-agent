@@ -19,6 +19,7 @@ export default async function JobPage({ params }: { params: Promise<{ id: string
     result: (row.result as SerializedJob["result"]) ?? null,
     error: row.error ?? null,
     sandboxId: row.sandboxId ?? null,
+    depth: row.depth as SerializedJob["depth"],
     createdAt: row.createdAt.toISOString(),
     startedAt: row.startedAt ? row.startedAt.toISOString() : null,
     completedAt: row.completedAt ? row.completedAt.toISOString() : null,

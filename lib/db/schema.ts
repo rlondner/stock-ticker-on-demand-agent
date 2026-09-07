@@ -11,6 +11,7 @@ export const jobs = pgTable(
     result: jsonb("result"),
     error: text("error"),
     sandboxId: text("sandbox_id"),
+    depth: text("depth").notNull().default("quick"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     startedAt: timestamp("started_at", { withTimezone: true }),
     completedAt: timestamp("completed_at", { withTimezone: true }),
@@ -26,3 +27,4 @@ export type Job = typeof jobs.$inferSelect;
 export type NewJob = typeof jobs.$inferInsert;
 export type JobStatus = "pending" | "running" | "complete" | "failed";
 export type Recommendation = "buy" | "hold" | "sell";
+export type Depth = "quick" | "deep" | "full";

@@ -1,5 +1,6 @@
 import type { JobStatus } from "@/lib/ui/status-pill";
 import type { Recommendation } from "@/lib/ui/signal-pill";
+import type { Depth } from "@/lib/db/schema";
 
 export type ThesisPoint = { claim: string; evidence: string; source_url: string | null };
 
@@ -48,6 +49,7 @@ export type SerializedJob = {
   } | null;
   error: string | null;
   sandboxId: string | null;
+  depth: Depth;
   createdAt: string; // ISO
   startedAt: string | null; // ISO
   completedAt: string | null; // ISO
