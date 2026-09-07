@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { db, jobs } from "@/lib/db/client";
 import { JobLivePoller } from "@/components/job/job-live-poller";
 import { triggerCompletionNotificationIfDue } from "@/lib/notify/trigger";
+import { traced } from "@/lib/observability/api";
 import type { SerializedJob } from "@/lib/job/types";
 
 export const dynamic = "force-dynamic";
@@ -11,7 +12,9 @@ export default async function JobPage({ params }: { params: Promise<{ id: string
   const { id } = await params;
   const rows = await db.select().from(jobs).where(eq(jobs.id, id)).limit(1);
   if (rows.length === 0) notFound();
-  const row = await triggerCompletionNotificationIfDue(id, rows[0]);
+  const row = await traced("job.page.notify", { job_id: id }, (span) =>
+    triggerCompletionNotificationIfDue(id, rows[0], span),
+  );
   const initial: SerializedJob = {
     id: row.id,
     ticker: row.ticker,

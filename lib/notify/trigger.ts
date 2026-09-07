@@ -16,8 +16,12 @@ type JobRow = typeof jobs.$inferSelect;
  * job id — only the caller that wins the atomic claim will ever send.
  *
  * `span`, if provided, gets `notify_claimed` and `notify_sent` attributes
- * recorded so a failed/never-attempted send is visible in the OTel trace
- * even when no external logging backend is configured.
+ * recorded for when this app's OTel tracer is actually initialized and
+ * exported. As of this writing, no OTel tracer provider is registered
+ * anywhere in this app (nobody calls `initOtel()`) — a pre-existing,
+ * app-wide gap unrelated to this feature — so these attributes are not
+ * currently visible in any backend. They're recorded anyway for
+ * forward-compatibility once that app-wide gap is fixed.
  */
 export async function triggerCompletionNotificationIfDue(
   jobId: string,
