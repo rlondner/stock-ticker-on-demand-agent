@@ -7,6 +7,7 @@ import { jobsSubmitted } from "@/lib/observability/metrics";
 
 const Body = z.object({
   ticker: z.string().regex(/^[A-Z]{1,5}$/, "ticker must be 1-5 uppercase letters"),
+  depth: z.enum(["quick", "deep", "full"]).default("quick"),
 });
 
 export async function POST(req: Request): Promise<Response> {
@@ -23,12 +24,12 @@ export async function POST(req: Request): Promise<Response> {
 
     const [{ id: jobId }] = await db
       .insert(jobs)
-      .values({ ticker: parsed.ticker })
+      .values({ ticker: parsed.ticker, depth: parsed.depth })
       .returning({ id: jobs.id });
-    addAttrs(span, { job_id: jobId, ticker: parsed.ticker });
+    addAttrs(span, { job_id: jobId, ticker: parsed.ticker, depth: parsed.depth });
 
     try {
-      const sandboxId = await spawnAgent(jobId, span);
+      const sandboxId = await spawnAgent(jobId, parsed.depth, span);
       await db.update(jobs).set({ sandboxId }).where(eq(jobs.id, jobId));
       addAttrs(span, { sandbox_id: sandboxId, outcome: "accepted" });
       jobsSubmitted("accepted", parsed.ticker);

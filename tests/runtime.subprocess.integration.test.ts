@@ -75,7 +75,7 @@ describe.skipIf(!haveSecrets)("subprocess runner integration", () => {
 
     try {
       const span = trace.getTracer("integration").startSpan("p");
-      const sandboxId = await spawnAnalysisSubprocess(jobId, span);
+      const sandboxId = await spawnAnalysisSubprocess(jobId, "quick", span);
       span.end();
       expect(sandboxId).toBe(`local-${jobId}`);
 

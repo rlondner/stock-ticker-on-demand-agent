@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { closeSync, existsSync, mkdirSync, openSync } from "node:fs";
 import path from "node:path";
 import type { Span } from "@opentelemetry/api";
+import type { Depth } from "@/lib/db/schema";
 import { injectTraceparent, forwardIfSet, datadogBlockIfEnabled } from "./env";
 
 function resolvePythonPath(): string {
@@ -15,6 +16,7 @@ function resolvePythonPath(): string {
 
 export async function spawnAnalysisSubprocess(
   jobId: string,
+  depth: Depth,
   parentSpan: Span,
 ): Promise<string> {
   const pythonPath = resolvePythonPath();
@@ -34,6 +36,7 @@ export async function spawnAnalysisSubprocess(
   const env: Record<string, string> = {
     ...process.env as Record<string, string>,
     JOB_ID: jobId,
+    DEPTH: depth,
     NEON_DATABASE_URL: process.env.NEON_DATABASE_URL!,
     OPENAI_API_KEY: process.env.OPENAI_API_KEY!,
     TRACEPARENT: injectTraceparent(parentSpan),

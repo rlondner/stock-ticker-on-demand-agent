@@ -30,7 +30,7 @@ describe("submitAnalysis", () => {
     expect(fetchImpl).toHaveBeenCalledWith("/api/jobs", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ ticker: "AAPL" }),
+      body: JSON.stringify({ ticker: "AAPL", depth: "quick" }),
     });
     expect(push).toHaveBeenCalledWith("/jobs/job-1");
     expect(result).toEqual({ ok: true, jobId: "job-1" });
@@ -68,5 +68,24 @@ describe("submitAnalysis", () => {
     const result = await submitAnalysis({ ticker: "AAPL", fetchImpl, push });
     expect(push).not.toHaveBeenCalled();
     expect(result).toEqual({ ok: false, error: "Submit failed" });
+  });
+
+  it("includes depth in the POST body, defaulting to 'quick'", async () => {
+    const fetchImpl = makeFetch(200, { jobId: "job-1" });
+    const push = vi.fn();
+    await submitAnalysis({ ticker: "AAPL", fetchImpl, push });
+    expect(fetchImpl).toHaveBeenCalledWith("/api/jobs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ticker: "AAPL", depth: "quick" }),
+    });
+  });
+
+  it("forwards an explicit depth", async () => {
+    const fetchImpl = makeFetch(200, { jobId: "job-1" });
+    const push = vi.fn();
+    await submitAnalysis({ ticker: "AAPL", depth: "deep", fetchImpl, push });
+    const body = JSON.parse((fetchImpl as any).mock.calls[0][1].body);
+    expect(body.depth).toBe("deep");
   });
 });

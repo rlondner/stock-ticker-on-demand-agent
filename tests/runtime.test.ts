@@ -20,9 +20,9 @@ describe("spawnAgent dispatcher", () => {
   it("defaults to daytona when AGENT_RUNTIME is unset", async () => {
     const { spawnAgent } = await import("@/lib/runtime");
     const span = trace.getTracer("t").startSpan("p");
-    const id = await spawnAgent("job-1", span);
+    const id = await spawnAgent("job-1", "quick", span);
     span.end();
-    expect(daytonaMock).toHaveBeenCalledWith("job-1", span);
+    expect(daytonaMock).toHaveBeenCalledWith("job-1", "quick", span);
     expect(subprocessMock).not.toHaveBeenCalled();
     expect(id).toBe("sb-from-daytona");
   });
@@ -31,9 +31,9 @@ describe("spawnAgent dispatcher", () => {
     process.env.AGENT_RUNTIME = "daytona";
     const { spawnAgent } = await import("@/lib/runtime");
     const span = trace.getTracer("t").startSpan("p");
-    await spawnAgent("job-2", span);
+    await spawnAgent("job-2", "quick", span);
     span.end();
-    expect(daytonaMock).toHaveBeenCalledWith("job-2", span);
+    expect(daytonaMock).toHaveBeenCalledWith("job-2", "quick", span);
     expect(subprocessMock).not.toHaveBeenCalled();
   });
 
@@ -41,9 +41,9 @@ describe("spawnAgent dispatcher", () => {
     process.env.AGENT_RUNTIME = "subprocess";
     const { spawnAgent } = await import("@/lib/runtime");
     const span = trace.getTracer("t").startSpan("p");
-    const id = await spawnAgent("job-3", span);
+    const id = await spawnAgent("job-3", "quick", span);
     span.end();
-    expect(subprocessMock).toHaveBeenCalledWith("job-3", span);
+    expect(subprocessMock).toHaveBeenCalledWith("job-3", "quick", span);
     expect(daytonaMock).not.toHaveBeenCalled();
     expect(id).toBe("local-from-subprocess");
   });
@@ -52,7 +52,7 @@ describe("spawnAgent dispatcher", () => {
     process.env.AGENT_RUNTIME = "kubernetes";
     const { spawnAgent } = await import("@/lib/runtime");
     const span = trace.getTracer("t").startSpan("p");
-    await expect(spawnAgent("job-4", span)).rejects.toThrow(/unknown AGENT_RUNTIME/i);
+    await expect(spawnAgent("job-4", "quick", span)).rejects.toThrow(/unknown AGENT_RUNTIME/i);
     span.end();
   });
 });

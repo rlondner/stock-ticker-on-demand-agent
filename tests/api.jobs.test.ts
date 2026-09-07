@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { POST } from "@/app/api/jobs/route";
 
 vi.mock("@/lib/runtime", () => ({
-  spawnAgent: vi.fn(async (jobId: string) => `sb-${jobId.slice(0, 8)}`),
+  spawnAgent: vi.fn(async (jobId: string, _depth: string) => `sb-${jobId.slice(0, 8)}`),
 }));
 
 vi.mock("@/lib/observability/metrics", () => ({
@@ -61,5 +61,22 @@ describe("POST /api/jobs", () => {
     await POST(req({ ticker: "" }));
     expect(jobsSubmitted).toHaveBeenCalledWith("accepted", "AAPL");
     expect(jobsSubmitted).toHaveBeenCalledWith("rejected", "unknown");
+  });
+
+  it("defaults depth to 'quick' and forwards it to spawnAgent", async () => {
+    const { spawnAgent } = await import("@/lib/runtime");
+    await POST(req({ ticker: "AAPL" }));
+    expect(spawnAgent).toHaveBeenCalledWith(expect.any(String), "quick", expect.anything());
+  });
+
+  it("accepts an explicit depth and forwards it to spawnAgent", async () => {
+    const { spawnAgent } = await import("@/lib/runtime");
+    await POST(req({ ticker: "AAPL", depth: "deep" }));
+    expect(spawnAgent).toHaveBeenCalledWith(expect.any(String), "deep", expect.anything());
+  });
+
+  it("rejects an invalid depth with 400", async () => {
+    const res = await POST(req({ ticker: "AAPL", depth: "bogus" }));
+    expect(res.status).toBe(400);
   });
 });

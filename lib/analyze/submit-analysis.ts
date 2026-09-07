@@ -2,15 +2,18 @@ export type SubmitResult =
   | { ok: true; jobId: string }
   | { ok: false; error: string; jobId?: string };
 
+export type Depth = "quick" | "deep" | "full";
+
 export type SubmitParams = {
   ticker: string;
+  depth?: Depth;
   fetchImpl?: typeof fetch;
   push: (path: string) => void;
 };
 
 const TICKER_RE = /^[A-Z]{1,5}$/;
 
-export async function submitAnalysis({ ticker, fetchImpl, push }: SubmitParams): Promise<SubmitResult> {
+export async function submitAnalysis({ ticker, depth = "quick", fetchImpl, push }: SubmitParams): Promise<SubmitResult> {
   const doFetch: typeof fetch = fetchImpl ?? fetch;
   const value = ticker.trim().toUpperCase();
   if (!TICKER_RE.test(value)) {
@@ -22,7 +25,7 @@ export async function submitAnalysis({ ticker, fetchImpl, push }: SubmitParams):
     res = await doFetch("/api/jobs", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ ticker: value }),
+      body: JSON.stringify({ ticker: value, depth }),
     });
   } catch {
     return { ok: false, error: "Submit failed" };

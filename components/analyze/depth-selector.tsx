@@ -1,5 +1,4 @@
 "use client";
-import { useState } from "react";
 
 const DEPTHS = [
   { key: "quick", icon: "speed", label: "Quick Scan", eta: "~2 mins" },
@@ -7,19 +6,20 @@ const DEPTHS = [
   { key: "full", icon: "description", label: "Full Report", eta: "~20 mins" },
 ] as const;
 
-export function DepthSelector() {
-  const [selected, setSelected] = useState<(typeof DEPTHS)[number]["key"]>("quick");
+export type DepthKey = (typeof DEPTHS)[number]["key"];
+
+export function DepthSelector({ value, onChange }: { value: DepthKey; onChange: (key: DepthKey) => void }) {
   return (
     <div className="space-y-2">
       <label className="text-sm font-semibold text-af-on-surface">Analysis Depth</label>
       <div className="grid grid-cols-3 gap-4">
         {DEPTHS.map((d) => {
-          const isSelected = selected === d.key;
+          const isSelected = value === d.key;
           return (
             <button
               key={d.key}
               type="button"
-              onClick={() => setSelected(d.key)}
+              onClick={() => onChange(d.key)}
               className={`flex flex-col items-center gap-2 p-6 border-2 rounded-xl text-center transition-all ${
                 isSelected
                   ? "border-af-primary bg-af-surface-container-low"

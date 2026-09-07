@@ -43,7 +43,7 @@ describe("spawnAnalysisSubprocess", () => {
   it("returns 'local-<jobId>' and spawns the agent with the required env", async () => {
     const { spawnAnalysisSubprocess } = await import("@/lib/runtime/subprocess");
     const span = trace.getTracer("t").startSpan("p");
-    const id = await spawnAnalysisSubprocess("job-abc", span);
+    const id = await spawnAnalysisSubprocess("job-abc", "quick", span);
     span.end();
     expect(id).toBe("local-job-abc");
 
@@ -55,6 +55,7 @@ describe("spawnAnalysisSubprocess", () => {
     expect(opts.detached).toBe(true);
     expect(opts.stdio).toEqual(["ignore", 42, 42]);
     expect(opts.env.JOB_ID).toBe("job-abc");
+    expect(opts.env.DEPTH).toBe("quick");
     expect(opts.env.NEON_DATABASE_URL).toBe("postgresql://test");
     expect(opts.env.OPENAI_API_KEY).toBe("sk-test");
     expect(opts.env.TRACEPARENT).toMatch(/^00-/);
@@ -68,7 +69,7 @@ describe("spawnAnalysisSubprocess", () => {
     process.env.SENTRY_DSN_AGENT = "https://x@sentry.io/1";
     const { spawnAnalysisSubprocess } = await import("@/lib/runtime/subprocess");
     const span = trace.getTracer("t").startSpan("p");
-    await spawnAnalysisSubprocess("job-fwd", span);
+    await spawnAnalysisSubprocess("job-fwd", "quick", span);
     span.end();
     const opts = spawnMock.mock.calls.at(-1)![2];
     expect(opts.env.OPENAI_API_URL).toBe("https://proxy.example.com/v1");
@@ -80,7 +81,7 @@ describe("spawnAnalysisSubprocess", () => {
     process.env.DD_API_KEY = "dd-key";
     const { spawnAnalysisSubprocess } = await import("@/lib/runtime/subprocess");
     const span = trace.getTracer("t").startSpan("p");
-    await spawnAnalysisSubprocess("job-dd", span);
+    await spawnAnalysisSubprocess("job-dd", "quick", span);
     span.end();
     const opts = spawnMock.mock.calls.at(-1)![2];
     expect(opts.env.DD_API_KEY).toBe("dd-key");
@@ -92,7 +93,7 @@ describe("spawnAnalysisSubprocess", () => {
     process.env.DD_TRACE_ENABLED = "false";
     const { spawnAnalysisSubprocess } = await import("@/lib/runtime/subprocess");
     const span = trace.getTracer("t").startSpan("p");
-    await spawnAnalysisSubprocess("job-dd-disabled", span);
+    await spawnAnalysisSubprocess("job-dd-disabled", "quick", span);
     span.end();
     const opts = spawnMock.mock.calls.at(-1)![2];
     expect(opts.env.DD_TRACE_ENABLED).toBe("false");
@@ -103,7 +104,7 @@ describe("spawnAnalysisSubprocess", () => {
     process.env.DD_OTLP_ENDPOINT = "https://trace.agent.datadoghq.com/v1/traces";
     const { spawnAnalysisSubprocess } = await import("@/lib/runtime/subprocess");
     const span = trace.getTracer("t").startSpan("p");
-    await spawnAnalysisSubprocess("job-dd-otlp", span);
+    await spawnAnalysisSubprocess("job-dd-otlp", "quick", span);
     span.end();
     const opts = spawnMock.mock.calls.at(-1)![2];
     expect(opts.env.DD_EXPORTER).toBe("otlp");
@@ -114,7 +115,7 @@ describe("spawnAnalysisSubprocess", () => {
     process.env.DAYTONA_API_KEY = "dt-key";
     const { spawnAnalysisSubprocess } = await import("@/lib/runtime/subprocess");
     const span = trace.getTracer("t").startSpan("p");
-    await spawnAnalysisSubprocess("job-no-dt", span);
+    await spawnAnalysisSubprocess("job-no-dt", "quick", span);
     span.end();
     const opts = spawnMock.mock.calls.at(-1)![2];
     expect(opts.env.DAYTONA_API_KEY).toBeUndefined();
@@ -123,7 +124,7 @@ describe("spawnAnalysisSubprocess", () => {
   it("creates agent/.runs/ and opens a per-job log file", async () => {
     const { spawnAnalysisSubprocess } = await import("@/lib/runtime/subprocess");
     const span = trace.getTracer("t").startSpan("p");
-    await spawnAnalysisSubprocess("job-log", span);
+    await spawnAnalysisSubprocess("job-log", "quick", span);
     span.end();
     expect(mkdirSyncMock).toHaveBeenCalledWith(
       expect.stringMatching(/agent[\\/]\.runs$/),
@@ -138,7 +139,7 @@ describe("spawnAnalysisSubprocess", () => {
   it("closes the parent's log fd after spawn to avoid leaking it", async () => {
     const { spawnAnalysisSubprocess } = await import("@/lib/runtime/subprocess");
     const span = trace.getTracer("t").startSpan("p");
-    await spawnAnalysisSubprocess("job-close", span);
+    await spawnAnalysisSubprocess("job-close", "quick", span);
     span.end();
     expect(closeSyncMock).toHaveBeenCalledWith(42);
   });
@@ -147,7 +148,7 @@ describe("spawnAnalysisSubprocess", () => {
     existsSyncMock.mockReturnValue(false);
     const { spawnAnalysisSubprocess } = await import("@/lib/runtime/subprocess");
     const span = trace.getTracer("t").startSpan("p");
-    await expect(spawnAnalysisSubprocess("job-no-venv", span)).rejects.toThrow(
+    await expect(spawnAnalysisSubprocess("job-no-venv", "quick", span)).rejects.toThrow(
       /agent venv not found/i,
     );
     span.end();

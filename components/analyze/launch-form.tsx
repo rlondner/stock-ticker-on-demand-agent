@@ -5,12 +5,14 @@ import { useRouter } from "next/navigation";
 import { TickerSearch } from "./ticker-search";
 import { SuggestedTickers } from "./suggested-tickers";
 import { DepthSelector } from "./depth-selector";
+import type { DepthKey } from "./depth-selector";
 import { submitAnalysis } from "@/lib/analyze/submit-analysis";
 
 export function LaunchForm() {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
   const [ticker, setTicker] = useState("");
+  const [depth, setDepth] = useState<DepthKey>("quick");
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -23,7 +25,7 @@ export function LaunchForm() {
     e.preventDefault();
     setError(null);
     startTransition(async () => {
-      const result = await submitAnalysis({ ticker, push: router.push });
+      const result = await submitAnalysis({ ticker, depth, push: router.push });
       if (!result.ok) setError(result.error);
     });
   };
@@ -52,7 +54,7 @@ export function LaunchForm() {
         <div className="space-y-6">
           <TickerSearch ref={inputRef} value={ticker} onChange={setTicker} />
           <SuggestedTickers onPick={onPickSuggestion} />
-          <DepthSelector />
+          <DepthSelector value={depth} onChange={setDepth} />
         </div>
 
         {/* Footer actions */}
