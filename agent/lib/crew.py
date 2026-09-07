@@ -14,7 +14,7 @@ from opentelemetry import trace
 
 from . import metrics
 from .finance import Snapshot, fetch_snapshot
-from .llm import Thesis, parse_thesis
+from .llm import Thesis, _grounding, parse_thesis
 from .observability import get_host
 from .prompts import _format_facts
 from .tools import build_toolset, build_code_exec_tool
@@ -219,12 +219,15 @@ def run_crew_analysis(ticker: str, depth: str, sandbox_id: str | None) -> dict:
         # agent_role); left uncalled rather than faking a per-agent split.
         raw = getattr(crew_output, "raw", None) or str(crew_output)
         thesis = parse_thesis(raw)
-        # Engine-authoritative, same as llm.py's quick-tier path: the crew's
-        # entire design is that it always does live research (You.com +
-        # yfinance/Daytona) when it succeeds, so "researched" is simpler and
-        # more honest here than introspecting which tool calls actually ran
-        # (Thesis doesn't carry that data on the crew path).
-        thesis = thesis.model_copy(update={"grounding": "researched"})
+        # Engine-authoritative, reusing llm.py's shared _grounding() helper:
+        # the crew path is only reached when tools were configured/available
+        # (tools_ran=True), but _observed_tool's contract is "never raises" --
+        # a failed You.com call becomes {"error": ...} fed back to the LLM,
+        # and the crew can still "complete" with zero real citations. So
+        # "researched" must not be assumed just because the crew finished;
+        # _grounding() inspects whether any bull/bear/risk point actually
+        # carries a source_url and degrades to "limited" if not.
+        thesis = thesis.model_copy(update={"grounding": _grounding(True, thesis)})
         return {
             **thesis.model_dump(),
             "snapshot": snapshot.model_dump() if snapshot else None,

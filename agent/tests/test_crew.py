@@ -69,18 +69,41 @@ def test_run_crew_analysis_raises_without_youdotcom_api_key(monkeypatch):
     assert built == []  # never got far enough to build the crew
 
 
-def test_run_crew_analysis_sets_grounding_researched(monkeypatch):
-    """Finding 2: the crew path must engine-set grounding to 'researched'
-    (never trust Thesis's pydantic default of 'snapshot_only'), mirroring
-    llm.py's engine-authoritative model_copy(update=...) pattern."""
+def test_run_crew_analysis_sets_grounding_researched_when_citation_present(monkeypatch):
+    """Finding 2 (round 2): the crew path must engine-set grounding via the
+    shared _grounding() helper (same one llm.py's quick tier uses), not
+    hardcode 'researched' unconditionally. When at least one bull/bear/risk
+    point carries a source_url, grounding should be 'researched'."""
     monkeypatch.setenv("YOUDOTCOM_API_KEY", "ydc-test")
     monkeypatch.setattr(crew, "fetch_snapshot", lambda ticker: None)
-    fake_crew_instance = _fake_crew_instance()
+    thesis_dict = _fake_thesis_dict()
+    thesis_dict["bull_case"] = [{"claim": "c", "evidence": "e", "source_url": "https://x.test"}]
+    fake_crew_instance = _fake_crew_instance(thesis_dict)
     monkeypatch.setattr(crew, "_build_crew", lambda ticker, snapshot, sandbox_id, depth: fake_crew_instance)
 
     out = crew.run_crew_analysis("MDB", depth="deep", sandbox_id="sb-1")
 
     assert out["grounding"] == "researched"
+
+
+def test_run_crew_analysis_sets_grounding_limited_when_no_citations(monkeypatch):
+    """Finding 2 (round 2): if the crew completes but every You.com call
+    inside it failed (rate limit, network blip, etc.), no bull_case/bear_case/
+    key_risks point will carry a source_url even though tools were available
+    and the API key was set. The engine must not report 'researched' in that
+    case -- it should degrade to 'limited', mirroring llm.py's _grounding()."""
+    monkeypatch.setenv("YOUDOTCOM_API_KEY", "ydc-test")
+    monkeypatch.setattr(crew, "fetch_snapshot", lambda ticker: None)
+    thesis_dict = _fake_thesis_dict()
+    thesis_dict["bull_case"] = [{"claim": "c", "evidence": "e", "source_url": None}]
+    thesis_dict["bear_case"] = []
+    thesis_dict["key_risks"] = []
+    fake_crew_instance = _fake_crew_instance(thesis_dict)
+    monkeypatch.setattr(crew, "_build_crew", lambda ticker, snapshot, sandbox_id, depth: fake_crew_instance)
+
+    out = crew.run_crew_analysis("MDB", depth="deep", sandbox_id="sb-1")
+
+    assert out["grounding"] == "limited"
 
 
 def test_run_crew_analysis_records_duration_metric_on_success(monkeypatch):
