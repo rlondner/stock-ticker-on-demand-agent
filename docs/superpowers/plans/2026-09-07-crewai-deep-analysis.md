@@ -246,7 +246,12 @@ git commit -m "feat(daytona): thread depth through sandbox spawn, env-driven aut
 - Modify: `components/analyze/launch-form.tsx`
 - Test: `tests/api.jobs.test.ts`
 - Test: `tests/components/submit-analysis.test.ts`
-- Test: `tests/components/depth-selector.test.ts` (new)
+
+**Note:** this repo has no `@testing-library/react`/jsdom test environment and
+no existing component is render-tested (vitest is `environment: "node"`,
+`include: ["tests/**/*.test.ts"]` — pure-logic modules only). `DepthSelector`
+is verified manually in Step 8a below rather than introducing new test
+infrastructure for a single presentational component.
 
 **Interfaces:**
 - Consumes: `spawnAnalysisSandbox(jobId, depth, span)` (Task 2), `Depth` (Task 1).
@@ -300,33 +305,10 @@ Add to `tests/components/submit-analysis.test.ts` (new `it`):
   });
 ```
 
-Create `tests/components/depth-selector.test.ts`:
-
-```ts
-import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
-import { DepthSelector } from "@/components/analyze/depth-selector";
-
-describe("DepthSelector", () => {
-  it("calls onChange with the clicked depth's key", () => {
-    const onChange = vi.fn();
-    render(<DepthSelector value="quick" onChange={onChange} />);
-    fireEvent.click(screen.getByText("Deep Dive"));
-    expect(onChange).toHaveBeenCalledWith("deep");
-  });
-
-  it("marks the selected depth's button visually distinct", () => {
-    render(<DepthSelector value="full" onChange={() => {}} />);
-    const fullButton = screen.getByText("Full Report").closest("button")!;
-    expect(fullButton.className).toContain("border-af-primary");
-  });
-});
-```
-
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `pnpm vitest run tests/api.jobs.test.ts tests/components/submit-analysis.test.ts tests/components/depth-selector.test.ts`
-Expected: FAIL — `spawnAgent` called without a depth arg, `submitAnalysis` doesn't send `depth`, `DepthSelector` doesn't accept props.
+Run: `pnpm vitest run tests/api.jobs.test.ts tests/components/submit-analysis.test.ts`
+Expected: FAIL — `spawnAgent` called without a depth arg, `submitAnalysis` doesn't send `depth`.
 
 - [ ] **Step 3: Implement `lib/runtime/index.ts`**
 
@@ -512,10 +494,14 @@ export function DepthSelector({ value, onChange }: { value: DepthKey; onChange: 
 
 In `components/analyze/launch-form.tsx`: add `import type { DepthKey } from "./depth-selector";`, add state `const [depth, setDepth] = useState<DepthKey>("quick");`, change `<DepthSelector />` to `<DepthSelector value={depth} onChange={setDepth} />`, and change the `submitAnalysis({ ticker, push: router.push })` call to `submitAnalysis({ ticker, depth, push: router.push })`.
 
+- [ ] **Step 8a: Manually verify `DepthSelector` in the browser**
+
+Run: `pnpm dev`, open `http://localhost:3000/analyze` (or wherever `LaunchForm` renders). Click each of the three depth cards and confirm: the clicked card gets the `border-af-primary` highlight and the other two lose it, exactly one card is highlighted at a time, and "Quick Scan" is highlighted by default on page load.
+
 - [ ] **Step 9: Run tests to verify they pass**
 
-Run: `pnpm vitest run tests/api.jobs.test.ts tests/components/submit-analysis.test.ts tests/components/depth-selector.test.ts tests/daytona.test.ts`
-Expected: PASS (all four files)
+Run: `pnpm vitest run tests/api.jobs.test.ts tests/components/submit-analysis.test.ts tests/daytona.test.ts`
+Expected: PASS (all three files)
 
 - [ ] **Step 10: Full frontend test suite + typecheck**
 
@@ -528,7 +514,7 @@ Expected: PASS — no regressions in unrelated tests, no type errors.
 git add lib/runtime/index.ts lib/runtime/subprocess.ts app/api/jobs/route.ts \
         lib/analyze/submit-analysis.ts components/analyze/depth-selector.tsx \
         components/analyze/launch-form.tsx tests/api.jobs.test.ts \
-        tests/components/submit-analysis.test.ts tests/components/depth-selector.test.ts
+        tests/components/submit-analysis.test.ts
 git commit -m "feat(frontend): wire depth selector through submit → API → sandbox spawn"
 ```
 
@@ -539,55 +525,19 @@ git commit -m "feat(frontend): wire depth selector through submit → API → sa
 **Files:**
 - Modify: `lib/job/types.ts`
 - Modify: `components/job/investment-thesis.tsx`
-- Test: `tests/components/investment-thesis.test.ts` (new)
+
+**Note:** same test-infrastructure gap as Task 3 — no `@testing-library/react`/
+jsdom in this repo, no component is render-tested. `InvestmentThesis`'s new
+conditional sections are verified via `tsc --noEmit` (Step 2 below) plus the
+manual end-to-end browser check folded into Task 10's `deep`-tier smoke run
+(which is the first point in the plan a real `deep`-tier result exists to
+render).
 
 **Interfaces:**
 - Consumes: `ThesisPoint` (existing, `lib/job/types.ts`).
 - Produces: `SerializedJob.result.{researcher_findings,fundamentals_analysis,risk_analysis}?: ThesisPoint[]`.
 
-- [ ] **Step 1: Write the failing test**
-
-```ts
-// tests/components/investment-thesis.test.ts
-import { describe, it, expect } from "vitest";
-import { render, screen } from "@testing-library/react";
-import { InvestmentThesis } from "@/components/job/investment-thesis";
-
-const baseResult = {
-  confidence: "high",
-  bull_case: [],
-  bear_case: [],
-  key_risks: [],
-};
-
-describe("InvestmentThesis deep-tier sections", () => {
-  it("does not render deep-tier sections when absent (quick tier)", () => {
-    render(<InvestmentThesis result={baseResult as any} lastUpdatedLabel="now" />);
-    expect(screen.queryByText("Researcher Findings")).toBeNull();
-  });
-
-  it("renders Researcher Findings, Fundamentals Analysis, and Risk Analysis when present", () => {
-    const result = {
-      ...baseResult,
-      researcher_findings: [{ claim: "c1", evidence: "e1", source_url: null }],
-      fundamentals_analysis: [{ claim: "c2", evidence: "e2", source_url: null }],
-      risk_analysis: [{ claim: "c3", evidence: "e3", source_url: null }],
-    };
-    render(<InvestmentThesis result={result as any} lastUpdatedLabel="now" />);
-    expect(screen.getByText("Researcher Findings")).toBeTruthy();
-    expect(screen.getByText("Fundamentals Analysis")).toBeTruthy();
-    expect(screen.getByText("Risk Analysis")).toBeTruthy();
-    expect(screen.getByText("c1")).toBeTruthy();
-  });
-});
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `pnpm vitest run tests/components/investment-thesis.test.ts`
-Expected: FAIL — the new headings don't exist yet.
-
-- [ ] **Step 3: Extend the result type**
+- [ ] **Step 1: Extend the result type**
 
 In `lib/job/types.ts`, add to `SerializedJob.result`, after `key_risks?: ThesisPoint[];`:
 
@@ -597,7 +547,7 @@ In `lib/job/types.ts`, add to `SerializedJob.result`, after `key_risks?: ThesisP
     risk_analysis?: ThesisPoint[];
 ```
 
-- [ ] **Step 4: Render the sections conditionally**
+- [ ] **Step 2: Render the sections conditionally**
 
 In `components/job/investment-thesis.tsx`, inside the `InvestmentThesis` function, after the existing `const risks = ...` line, add:
 
@@ -621,15 +571,15 @@ After the closing `</div>` of the bull/bear grid and before the existing `<Thesi
       )}
 ```
 
-- [ ] **Step 5: Run test to verify it passes**
+- [ ] **Step 3: Typecheck and run the full frontend suite**
 
-Run: `pnpm vitest run tests/components/investment-thesis.test.ts`
-Expected: PASS
+Run: `pnpm tsc --noEmit && pnpm test`
+Expected: PASS — no type errors, no regressions in existing tests (this task adds no new automated tests; visual confirmation happens in Task 10).
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
-git add lib/job/types.ts components/job/investment-thesis.tsx tests/components/investment-thesis.test.ts
+git add lib/job/types.ts components/job/investment-thesis.tsx
 git commit -m "feat(frontend): render deep-tier researcher/fundamentals/risk sections"
 ```
 
@@ -1397,6 +1347,10 @@ Run (with `pnpm dev` already running in another terminal):
 ```
 Expected: `pending → running → complete` for both; the `deep` run's final JSON includes non-empty `researcher_findings`/`fundamentals_analysis`/`risk_analysis`, and completes comfortably before `DAYTONA_AUTO_DELETE_DEEP_S`.
 
+- [ ] **Step 3a: Manually verify the new `InvestmentThesis` sections render**
+
+Open `http://localhost:3000/jobs/<the-deep-run's-job-id>` in a browser (the job id is printed by `smoke.sh`). Confirm the page shows "Researcher Findings", "Fundamentals Analysis", and "Risk Analysis" sections (in addition to the existing Bull Case/Bear Case/Key Risks), each populated with the crew's claim/evidence/source-link items. This is the first point in the plan a real `deep`-tier result exists, closing the loop on Task 4's `InvestmentThesis` change (which had no automated render test — see Task 4's note).
+
 - [ ] **Step 4: Update `README.md`**
 
 - Add a row to the "Optional — Agent runtime" table (or a new "Optional — Deep-analysis crew" table) documenting `YOUDOTCOM_API_KEY`, `DAYTONA_AUTO_DELETE_DEEP_S`/`_FULL_S`, `CREW_MAX_EXECUTION_S_DEEP`/`_FULL`.
@@ -1417,3 +1371,4 @@ git commit -m "docs: document the deep-analysis tier; smoke.sh accepts a depth a
 - **Spec coverage:** §3 (schema/API) → Tasks 1, 3, 4. §3 autoDeleteInterval scaling → Task 2. §5 (crew/tools) → Tasks 5, 6, 8. §6 (timeouts/error handling/observability, env-driven per the follow-up request) → Tasks 2, 8, 9. §7 (testing plan) → a test step embedded in every task; `smoke.sh` → Task 10. §8 (out of scope) → not implemented, called out in Task 10 README update.
 - **Type consistency:** `Depth` defined once in `lib/db/schema.ts` (Task 1) and imported everywhere else (Tasks 2, 3, 4) rather than redefined. `run_crew_analysis(ticker, depth, sandbox_id)` signature is identical between its definition (Task 8) and its call site (Task 9). `ThesisPoint` shape (`claim`/`evidence`/`source_url`) is reused verbatim for the three new result sections rather than introducing a second shape.
 - **No placeholders:** every step has literal code/commands; the two "verify against installed version" notes (CrewAI's exact `max_execution_time` API surface in Task 8, the `daytona-sdk` pin in Task 6) are explicitly flagged as implementation-time lookups, not deferred design decisions — the design spec already calls these out as acceptable verify-during-build items, not gaps.
+- **Pre-flight correction (post-authoring, pre-execution):** the original draft of Tasks 3 and 4 specified `@testing-library/react` component-render tests. This repo has no such dependency, no jsdom test environment (vitest is `environment: "node"`), and no existing component is render-tested. Rather than introduce new test infrastructure for two presentational components, both tasks were revised to rely on `tsc --noEmit` + a manual browser check (Task 3's Step 8a, Task 4 deferred to Task 10's Step 3a) — consistent with this repo's existing convention of testing only pure-logic modules automatically.
