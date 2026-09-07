@@ -165,3 +165,37 @@ def test_main_persists_none_snapshot_when_fetch_fails(neon_url, fresh_job, monke
         ).fetchone()
     assert row[0] == "complete"
     assert row[1]["snapshot"] is None
+
+
+def test_agent_run_uses_llmobs_workflow_span(monkeypatch):
+    import contextlib, importlib, agent as agent_module
+
+    calls = {"workflow": [], "annotate": []}
+
+    @contextlib.contextmanager
+    def fake_workflow_span(name, session_id=None):
+        calls["workflow"].append((name, session_id))
+        yield "WORKFLOW_SPAN"
+
+    def fake_annotate(span, **kw):
+        calls["annotate"].append((span, kw))
+
+    importlib.reload(agent_module)
+    monkeypatch.setattr(agent_module.llmobs, "workflow_span", fake_workflow_span)
+    monkeypatch.setattr(agent_module.llmobs, "annotate", fake_annotate)
+    monkeypatch.setattr(agent_module, "get_job",
+                        lambda job_id: {"ticker": "AAPL", "status": "pending", "sandbox_id": None})
+    monkeypatch.setattr(agent_module, "mark_running", lambda job_id: None)
+    monkeypatch.setattr(agent_module, "mark_complete", lambda job_id, recommendation, result: None)
+    monkeypatch.setattr(agent_module, "run_analysis", lambda ticker: {"recommendation": "buy"})
+    monkeypatch.setattr(agent_module, "self_delete", lambda sandbox_id=None: None)
+    monkeypatch.setattr(agent_module, "init_observability", lambda **kw: None)
+    monkeypatch.setattr(agent_module, "flush_observability", lambda *a, **kw: None)
+    monkeypatch.setattr(agent_module._metrics, "record_job_completed", lambda *a, **kw: None)
+    monkeypatch.setattr(agent_module._metrics, "record_agent_run_duration", lambda *a, **kw: None)
+    monkeypatch.setattr(agent_module, "JOB_ID", "job-llmobs-wf")
+
+    agent_module.main()
+
+    assert calls["workflow"] == [("agent.run", "job-llmobs-wf")]
+    assert any(span == "WORKFLOW_SPAN" for span, _ in calls["annotate"])

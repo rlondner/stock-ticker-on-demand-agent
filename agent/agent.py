@@ -8,6 +8,7 @@ from lib.db import get_job, mark_running, mark_complete, mark_failed
 from lib.llm import run_analysis
 import lib.metrics as _metrics
 from lib.self_delete import self_delete
+from lib import llmobs
 
 JOB_ID = os.environ.get("JOB_ID", "")
 
@@ -57,7 +58,8 @@ def main() -> None:
 
     final_status = "unknown"
     _start = time.monotonic()
-    with tracer.start_as_current_span("agent.run") as span:
+    with tracer.start_as_current_span("agent.run") as span, \
+         llmobs.workflow_span("agent.run", session_id=JOB_ID) as lspan:
         span.set_attribute("host", get_host())
         span.set_attribute("job_id", JOB_ID)
         job = None
@@ -68,18 +70,21 @@ def main() -> None:
                 final_status = "skipped"
                 return
             span.set_attribute("ticker", job["ticker"])
+            llmobs.annotate(lspan, input_data={"job_id": JOB_ID, "ticker": job["ticker"]})
 
             mark_running(JOB_ID)
             result = run_analysis(ticker=job["ticker"])
             mark_complete(JOB_ID, recommendation=result["recommendation"], result=result)
             span.set_attribute("final_status", "complete")
             final_status = "complete"
+            llmobs.annotate(lspan, output_data=result, metadata={"final_status": "complete"})
             _metrics.record_job_completed("complete", job["ticker"])
             _metrics.record_agent_run_duration("complete", job["ticker"], (time.monotonic() - _start) * 1000)
         except Exception as e:
             record_error(span, e)
             mark_failed(JOB_ID, error=f"{type(e).__name__}: {e}\n{traceback.format_exc()}")
             span.set_attribute("final_status", "failed")
+            llmobs.annotate(lspan, metadata={"final_status": "failed", "error": f"{type(e).__name__}: {e}"})
             _ticker = job["ticker"] if job else "unknown"
             _metrics.record_job_completed("failed", _ticker)
             _metrics.record_agent_run_duration("failed", _ticker, (time.monotonic() - _start) * 1000)
