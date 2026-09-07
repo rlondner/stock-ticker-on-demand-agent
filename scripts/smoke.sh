@@ -5,12 +5,13 @@ set -euo pipefail
 # waits for the row to complete, prints the result.
 
 TICKER="${1:-AAPL}"
+DEPTH="${2:-quick}"
 BASE="${BASE:-http://localhost:3000}"
 
-echo "Submitting $TICKER..."
+echo "Submitting $TICKER (depth: $DEPTH)..."
 JOB=$(curl -s -X POST "$BASE/api/jobs" \
   -H 'content-type: application/json' \
-  -d "{\"ticker\":\"$TICKER\"}" | jq -r .jobId)
+  -d "{\"ticker\":\"$TICKER\",\"depth\":\"$DEPTH\"}" | jq -r .jobId)
 echo "Job id: $JOB"
 
 echo "Polling..."

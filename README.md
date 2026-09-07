@@ -89,6 +89,16 @@ Set `AGENT_RUNTIME=subprocess` in `.env` to skip Daytona entirely (see *HOW-TO: 
 |---|---|
 | `AGENT_RUNTIME` | `daytona` (default) spawns the agent in a Daytona sandbox. `subprocess` runs the Python agent as a detached local child process (no Daytona account needed). Unknown values cause the API route to throw on the next submit. |
 
+### Optional — Deep-analysis crew
+
+| Var | Source | Example | What it does |
+|---|---|---|---|
+| `YOUDOTCOM_API_KEY` | [You.com dashboard](https://api.you.com) → API Keys | `<your-api-key>` | Enables the `deep` and `full` analysis tiers. The crew's Researcher and Risk Analyst agents use You.com's News and Search APIs for real-time data. If unset, only `quick` tier is available. |
+| `DAYTONA_AUTO_DELETE_DEEP_S` | Application config | `900` | Wall-clock timeout (seconds) for `deep`-tier sandboxes before auto-deletion. Must exceed the matching `CREW_MAX_EXECUTION_S_DEEP` (default 780) in `agent/.env.example` so the crew finishes and writes its result before the sandbox self-destructs. |
+| `DAYTONA_AUTO_DELETE_FULL_S` | Application config | `1500` | Wall-clock timeout (seconds) for `full`-tier sandboxes. Must exceed `CREW_MAX_EXECUTION_S_FULL` (default 1380). |
+| `CREW_MAX_EXECUTION_S_DEEP` | `agent/.env` | `780` | Wall-clock budget (seconds) for the `deep`-tier crew across all 4 agents. Set in `agent/.env`; must stay below `DAYTONA_AUTO_DELETE_DEEP_S`. |
+| `CREW_MAX_EXECUTION_S_FULL` | `agent/.env` | `1380` | Wall-clock budget (seconds) for the `full`-tier crew. Set in `agent/.env`; must stay below `DAYTONA_AUTO_DELETE_FULL_S`. |
+
 ### Optional — Sentry block (omit entirely to disable Sentry)
 
 | Var | What it does |
@@ -209,6 +219,29 @@ To route requests to an OpenAI-compatible endpoint instead, set `OPENAI_API_URL`
 
 For endpoints that don't implement the Responses API (Ollama, vLLM, LiteLLM, OpenRouter, Azure, …), also set `OPENAI_USE_RESPONSES_API=false`. The agent then uses `chat.completions` and drops the `web_search` tool — the model will rely on its training-cutoff knowledge of the ticker rather than live web data.
 
+## HOW-TO: Enable the deep-analysis tier
+
+The demo ships with a basic `quick` tier (single quick-response agent). Enable `deep` and `full` tiers for multi-agent CrewAI analysis with Researcher, Bull Analyst, Bear Analyst, and Risk Analyst agents.
+
+1. Create an account at [you.com](https://you.com) and generate an API key (free tier available).
+2. Add to `.env`:
+   ```
+   YOUDOTCOM_API_KEY=<your-key>
+   DAYTONA_AUTO_DELETE_DEEP_S=900
+   DAYTONA_AUTO_DELETE_FULL_S=1500
+   ```
+   (These defaults are already in `.env.example`; customize if needed.)
+3. In `agent/.env`, ensure:
+   ```
+   CREW_MAX_EXECUTION_S_DEEP=780
+   CREW_MAX_EXECUTION_S_FULL=1380
+   ```
+   These must stay **below** the matching `DAYTONA_AUTO_DELETE_*_S` timeouts.
+4. Restart `pnpm dev`.
+5. Submit a ticker and select either **Deep** (researcher + analyst agents) or **Full** (same agents + fundamentals/risk summaries) from the depth dropdown. Expected runtime: `deep` ~30–60s, `full` ~60–120s.
+
+For design details and crew composition, see `docs/superpowers/specs/2026-09-07-crewai-deep-analysis-design.md`.
+
 ## HOW-TO: Enable Sentry only
 
 1. Create two Sentry projects: one for the NextJS frontend, one for the Python agent.
@@ -309,10 +342,11 @@ pnpm dev
 
 In another (Git Bash or WSL — the script is bash):
 ```bash
-./scripts/smoke.sh AAPL
+./scripts/smoke.sh AAPL quick      # basic analysis (default)
+./scripts/smoke.sh AAPL deep       # deep-analysis tier (requires YOUDOTCOM_API_KEY)
 ```
 
-Expected: `pending → running → complete` over ~30–90 seconds, then the script prints the full JSON result.
+Expected: `pending → running → complete` over ~30–90 seconds (quick) or 60–120s (deep), then the script prints the full JSON result. For `deep` and `full` tiers, the result includes `researcher_findings`, `fundamentals_analysis`, and `risk_analysis` sections with non-empty evidence and source links.
 
 ## Operating the demo
 
@@ -385,12 +419,12 @@ Expected: `pending → running → complete` over ~30–90 seconds, then the scr
 
 - Real authentication (schema is multi-user-ready; auth provider is not wired)
 - Persistent agent memory across runs
-- Multi-step agent loops (planner → researcher → analyst)
 - Cost budgeting per user
 - Rate limiting / abuse prevention
 - Streaming the LLM output to the UI as it generates
 - Vercel deploy automation
 - Production Daytona quota / region failover
+- One.com integration (not wired; web_search via OpenAI Responses API only)
 
 Full rationale in `docs/superpowers/specs/2026-06-22-daytona-stock-agent-design.md` § 11.
 
