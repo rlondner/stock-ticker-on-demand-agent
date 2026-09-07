@@ -36,6 +36,8 @@ export async function spawnAnalysisSandbox(jobId: string, depth: Depth, parentSp
     ...forwardIfSet("OPENAI_MODEL"),
     ...forwardIfSet("OPENAI_USE_RESPONSES_API"),
     ...forwardIfSet("YOUDOTCOM_API_KEY"),
+    ...forwardIfSet("CREW_MAX_EXECUTION_S_DEEP"),
+    ...forwardIfSet("CREW_MAX_EXECUTION_S_FULL"),
     ...forwardIfSet("SENTRY_DSN_AGENT"),
     ...forwardIfSet("DD_TRACE_ENABLED"),
     ...forwardIfSet("DD_EXPORTER"),

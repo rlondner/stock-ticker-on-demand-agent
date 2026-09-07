@@ -40,6 +40,8 @@ describe("spawnAnalysisSandbox", () => {
     delete process.env.DAYTONA_AUTO_DELETE_DEEP_S;
     delete process.env.DAYTONA_AUTO_DELETE_FULL_S;
     delete process.env.YOUDOTCOM_API_KEY;
+    delete process.env.CREW_MAX_EXECUTION_S_DEEP;
+    delete process.env.CREW_MAX_EXECUTION_S_FULL;
     createMock.mockClear();
     createSessionMock.mockClear();
     executeSessionCommandMock.mockClear();
@@ -177,5 +179,25 @@ describe("spawnAnalysisSandbox", () => {
     span.end();
     const call = createMock.mock.calls.at(-1)![0] as any;
     expect(call.envVars.YOUDOTCOM_API_KEY).toBe("ydc-sk-test");
+  });
+
+  it("forwards CREW_MAX_EXECUTION_S_DEEP and CREW_MAX_EXECUTION_S_FULL only when set", async () => {
+    const { spawnAnalysisSandbox } = await import("@/lib/daytona");
+
+    const spanUnset = trace.getTracer("t").startSpan("p-unset");
+    await spawnAnalysisSandbox("job-crew-unset", "deep", spanUnset);
+    spanUnset.end();
+    const callUnset = createMock.mock.calls.at(-1)![0] as any;
+    expect(callUnset.envVars.CREW_MAX_EXECUTION_S_DEEP).toBeUndefined();
+    expect(callUnset.envVars.CREW_MAX_EXECUTION_S_FULL).toBeUndefined();
+
+    process.env.CREW_MAX_EXECUTION_S_DEEP = "800";
+    process.env.CREW_MAX_EXECUTION_S_FULL = "1400";
+    const spanSet = trace.getTracer("t").startSpan("p-set");
+    await spawnAnalysisSandbox("job-crew-set", "deep", spanSet);
+    spanSet.end();
+    const callSet = createMock.mock.calls.at(-1)![0] as any;
+    expect(callSet.envVars.CREW_MAX_EXECUTION_S_DEEP).toBe("800");
+    expect(callSet.envVars.CREW_MAX_EXECUTION_S_FULL).toBe("1400");
   });
 });
