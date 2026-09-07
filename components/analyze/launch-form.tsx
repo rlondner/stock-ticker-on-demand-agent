@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { TickerSearch } from "./ticker-search";
 import { SuggestedTickers } from "./suggested-tickers";
 import { DepthSelector } from "./depth-selector";
+import { NotifyPicker, validateDestination, type NotifyChannelOption } from "./notify-picker";
 import { submitAnalysis } from "@/lib/analyze/submit-analysis";
 
 export function LaunchForm() {
@@ -13,6 +14,8 @@ export function LaunchForm() {
   const [ticker, setTicker] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const [notifyChannel, setNotifyChannel] = useState<NotifyChannelOption>("none");
+  const [notifyDestination, setNotifyDestination] = useState("");
 
   const onPickSuggestion = (t: string) => {
     setTicker(t);
@@ -22,8 +25,17 @@ export function LaunchForm() {
   const onSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    const destErr = validateDestination(notifyChannel, notifyDestination);
+    if (destErr) {
+      setError(destErr);
+      return;
+    }
     startTransition(async () => {
-      const result = await submitAnalysis({ ticker, push: router.push });
+      const result = await submitAnalysis({
+        ticker,
+        ...(notifyChannel !== "none" ? { notifyChannel, notifyDestination } : {}),
+        push: router.push,
+      });
       if (!result.ok) setError(result.error);
     });
   };
@@ -53,6 +65,12 @@ export function LaunchForm() {
           <TickerSearch ref={inputRef} value={ticker} onChange={setTicker} />
           <SuggestedTickers onPick={onPickSuggestion} />
           <DepthSelector />
+          <NotifyPicker
+            channel={notifyChannel}
+            destination={notifyDestination}
+            onChannelChange={setNotifyChannel}
+            onDestinationChange={setNotifyDestination}
+          />
         </div>
 
         {/* Footer actions */}

@@ -69,4 +69,22 @@ describe("submitAnalysis", () => {
     expect(push).not.toHaveBeenCalled();
     expect(result).toEqual({ ok: false, error: "Submit failed" });
   });
+
+  it("omits notify fields from the POST body when no channel is selected", async () => {
+    const fetchImpl = makeFetch(200, { jobId: "job-1" });
+    const push = vi.fn();
+    await submitAnalysis({ ticker: "AAPL", fetchImpl, push });
+    const body = JSON.parse((fetchImpl as any).mock.calls[0][1].body);
+    expect(body.notifyChannel).toBeUndefined();
+    expect(body.notifyDestination).toBeUndefined();
+  });
+
+  it("includes notify fields in the POST body when a channel is selected", async () => {
+    const fetchImpl = makeFetch(200, { jobId: "job-1" });
+    const push = vi.fn();
+    await submitAnalysis({ ticker: "AAPL", notifyChannel: "slack", notifyDestination: "#analysts", fetchImpl, push });
+    const body = JSON.parse((fetchImpl as any).mock.calls[0][1].body);
+    expect(body.notifyChannel).toBe("slack");
+    expect(body.notifyDestination).toBe("#analysts");
+  });
 });
