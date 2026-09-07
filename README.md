@@ -267,6 +267,44 @@ Set both blocks. There is no flag — both are wired in parallel based on which 
 
 Leave both blocks empty. OTel runs in no-op mode; the demo still works end-to-end. Use the **`/admin` page** and the `jobs` table directly as the audit trail. The `error` column holds the full traceback on failures; `sandbox_id` links each job to the Daytona dashboard logs.
 
+## HOW-TO: Enable completion notifications (One / withone.ai)
+
+1. Sign up at [withone.ai](https://www.withone.ai) and install the CLI. You can use the local `@withone/cli` dependency already in this project, or install globally:
+   ```powershell
+   npm install -g @withone/cli
+   ```
+
+2. Authenticate non-interactively with your One API key:
+   ```powershell
+   one init --auth manual --api-key <ONE_SECRET>
+   ```
+   Copy your API key from the One dashboard and replace `<ONE_SECRET>` above.
+
+3. Connect your Slack and/or Gmail account (run once as the operator):
+   ```powershell
+   one connect slack
+   one connect gmail
+   ```
+   Follow the browser prompts to link your account(s).
+
+4. Find the action IDs for sending messages and emails:
+   ```powershell
+   one actions search slack "send message"
+   one actions search gmail "send email"
+   ```
+   Each search returns a list with `actionId` and `connectionKey` for the connection you just created.
+
+5. Fill in the four `.env` variables from Step 1 above using the values from Step 4:
+   ```
+   ONE_SECRET=<your API key>
+   ONE_SLACK_CONNECTION_KEY=<from 'one actions search slack'>
+   ONE_SLACK_SEND_ACTION_ID=<from 'one actions search slack'>
+   ONE_GMAIL_CONNECTION_KEY=<from 'one actions search gmail'>
+   ONE_GMAIL_SEND_ACTION_ID=<from 'one actions search gmail'>
+   ```
+
+6. Submit a job with a notify channel selected. Once the analysis completes, a Slack message or email arrives at the destination you provided in the form.
+
 ## Running the app
 
 ```powershell
@@ -383,7 +421,7 @@ Expected: `pending → running → complete` over ~30–90 seconds, then the scr
 
 ## Out of scope (intentional YAGNI)
 
-- Real authentication (schema is multi-user-ready; auth provider is not wired)
+- Real authentication (schema is multi-user-ready; auth provider is not wired). Note: the "completion notifications" feature (One/withone.ai) provides agent-to-third-party-service auth, not end-user login — the end-user auth gap remains unaddressed.
 - Persistent agent memory across runs
 - Multi-step agent loops (planner → researcher → analyst)
 - Cost budgeting per user
