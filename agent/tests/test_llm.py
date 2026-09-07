@@ -496,3 +496,41 @@ def test_analyze_passes_data_tools_and_web_search(monkeypatch):
     # the actual dispatch table (function_registry) is wired — not just schemas
     assert set(captured_registry.keys()) == {"get_financials", "get_valuation", "get_earnings"}
     assert all(callable(fn) for fn in captured_registry.values())
+
+
+def test_thesis_defaults_deep_tier_fields_to_empty_list():
+    t = parse_thesis(_THESIS_JSON)
+    assert t.researcher_findings == []
+    assert t.fundamentals_analysis == []
+    assert t.risk_analysis == []
+
+
+def test_thesis_accepts_deep_tier_fields_when_present():
+    deep_json = _THESIS_JSON[:-1] + (
+        ',"researcher_findings":[{"claim":"c","evidence":"e","source_url":null}],'
+        '"fundamentals_analysis":[{"claim":"c","evidence":"e","source_url":null}],'
+        '"risk_analysis":[{"claim":"c","evidence":"e","source_url":null}]}'
+    )
+    t = parse_thesis(deep_json)
+    assert len(t.researcher_findings) == 1
+    assert len(t.fundamentals_analysis) == 1
+    assert len(t.risk_analysis) == 1
+
+
+def test_run_analysis_omits_deep_tier_keys(monkeypatch):
+    """Regression test: run_analysis (quick tier) must not emit
+    researcher_findings/fundamentals_analysis/risk_analysis at all, since a
+    present-but-empty list renders a visible (wrong) 'None provided.' section
+    in InvestmentThesis, unlike a genuinely absent key."""
+    import lib.llm as llm_module
+
+    class _FakeClient:
+        def analyze(self, ticker, snapshot=None):
+            return parse_thesis(_THESIS_JSON)
+
+    monkeypatch.setattr(llm_module, "fetch_snapshot", lambda ticker: None)
+    monkeypatch.setattr(llm_module, "OpenAIClient", _FakeClient)
+    result = llm_module.run_analysis("MDB")
+    assert "researcher_findings" not in result
+    assert "fundamentals_analysis" not in result
+    assert "risk_analysis" not in result

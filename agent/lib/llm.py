@@ -35,6 +35,9 @@ class Thesis(BaseModel):
     bull_case: list[ThesisPoint]
     bear_case: list[ThesisPoint]
     key_risks: list[ThesisPoint]
+    researcher_findings: list[ThesisPoint] = Field(default_factory=list)
+    fundamentals_analysis: list[ThesisPoint] = Field(default_factory=list)
+    risk_analysis: list[ThesisPoint] = Field(default_factory=list)
     # Set by the engine (not the model): overridden after parse. Default keeps
     # parsing valid when the model omits it (which it should).
     grounding: str = Field(default="snapshot_only", pattern="^(researched|limited|snapshot_only)$")
@@ -232,7 +235,8 @@ def run_analysis(ticker: str) -> dict:
     snapshot = fetch_snapshot(ticker)
     client: LLMClient = OpenAIClient()
     thesis = client.analyze(ticker, snapshot=snapshot)
+    data = thesis.model_dump(exclude={"researcher_findings", "fundamentals_analysis", "risk_analysis"})
     return {
-        **thesis.model_dump(),
+        **data,
         "snapshot": snapshot.model_dump() if snapshot else None,
     }
