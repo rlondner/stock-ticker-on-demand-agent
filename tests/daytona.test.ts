@@ -181,23 +181,35 @@ describe("spawnAnalysisSandbox", () => {
     expect(call.envVars.YOUDOTCOM_API_KEY).toBe("ydc-sk-test");
   });
 
-  it("forwards CREW_MAX_EXECUTION_S_DEEP and CREW_MAX_EXECUTION_S_FULL only when set", async () => {
+  it("does not forward CREW_MAX_EXECUTION_S_DEEP/_FULL when unset", async () => {
     const { spawnAnalysisSandbox } = await import("@/lib/daytona");
+    const span = trace.getTracer("t").startSpan("p");
+    await spawnAnalysisSandbox("job-crew-unset", "deep", span);
+    span.end();
+    expect(createMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        envVars: expect.not.objectContaining({
+          CREW_MAX_EXECUTION_S_DEEP: expect.anything(),
+          CREW_MAX_EXECUTION_S_FULL: expect.anything(),
+        }),
+      }),
+    );
+  });
 
-    const spanUnset = trace.getTracer("t").startSpan("p-unset");
-    await spawnAnalysisSandbox("job-crew-unset", "deep", spanUnset);
-    spanUnset.end();
-    const callUnset = createMock.mock.calls.at(-1)![0] as any;
-    expect(callUnset.envVars.CREW_MAX_EXECUTION_S_DEEP).toBeUndefined();
-    expect(callUnset.envVars.CREW_MAX_EXECUTION_S_FULL).toBeUndefined();
-
+  it("forwards CREW_MAX_EXECUTION_S_DEEP and CREW_MAX_EXECUTION_S_FULL when set", async () => {
     process.env.CREW_MAX_EXECUTION_S_DEEP = "800";
     process.env.CREW_MAX_EXECUTION_S_FULL = "1400";
-    const spanSet = trace.getTracer("t").startSpan("p-set");
-    await spawnAnalysisSandbox("job-crew-set", "deep", spanSet);
-    spanSet.end();
-    const callSet = createMock.mock.calls.at(-1)![0] as any;
-    expect(callSet.envVars.CREW_MAX_EXECUTION_S_DEEP).toBe("800");
-    expect(callSet.envVars.CREW_MAX_EXECUTION_S_FULL).toBe("1400");
+    const { spawnAnalysisSandbox } = await import("@/lib/daytona");
+    const span = trace.getTracer("t").startSpan("p");
+    await spawnAnalysisSandbox("job-crew-set", "deep", span);
+    span.end();
+    expect(createMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        envVars: expect.objectContaining({
+          CREW_MAX_EXECUTION_S_DEEP: "800",
+          CREW_MAX_EXECUTION_S_FULL: "1400",
+        }),
+      }),
+    );
   });
 });
