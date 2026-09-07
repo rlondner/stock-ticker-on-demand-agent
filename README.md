@@ -221,7 +221,7 @@ For endpoints that don't implement the Responses API (Ollama, vLLM, LiteLLM, Ope
 
 ## HOW-TO: Enable the deep-analysis tier
 
-The demo ships with a basic `quick` tier (single quick-response agent). Enable `deep` and `full` tiers for multi-agent CrewAI analysis with Researcher, Bull Analyst, Bear Analyst, and Risk Analyst agents.
+The demo ships with a basic `quick` tier (single quick-response agent). Enable `deep` and `full` tiers for multi-agent CrewAI analysis with Researcher, Fundamentals Analyst, Risk Analyst, and Portfolio Manager agents.
 
 1. Create an account at [you.com](https://you.com) and generate an API key (free tier available).
 2. Add to `.env`:
@@ -238,7 +238,7 @@ The demo ships with a basic `quick` tier (single quick-response agent). Enable `
    ```
    These must stay **below** the matching `DAYTONA_AUTO_DELETE_*_S` timeouts.
 4. Restart `pnpm dev`.
-5. Submit a ticker and select either **Deep** (researcher + analyst agents) or **Full** (same agents + fundamentals/risk summaries) from the depth dropdown. Expected runtime: `deep` ~8 mins, `full` ~20 mins.
+5. Submit a ticker and select either **Deep** (researcher + analyst agents) or **Full** (runs the identical 4-agent crew as Deep, with a larger time budget) from the depth dropdown. Expected runtime: `deep` ~8 mins, `full` ~20 mins.
 
 For design details and crew composition, see `docs/superpowers/specs/2026-09-07-crewai-deep-analysis-design.md`.
 
@@ -424,7 +424,7 @@ Expected: `pending → running → complete` over ~2 mins (quick), ~8 mins (deep
 - Streaming the LLM output to the UI as it generates
 - Vercel deploy automation
 - Production Daytona quota / region failover
-- One.com integration (not wired; web_search via OpenAI Responses API only)
+- One (withone.ai) auth/notifications integration — not wired, separate future scope (see design spec)
 
 Full rationale in `docs/superpowers/specs/2026-06-22-daytona-stock-agent-design.md` § 11.
 
