@@ -9,6 +9,17 @@ yfinance>=0.2.40
 # --- Daytona code-exec tool ---
 daytona>=0.210.0
 
+# --- CrewAI deep-analysis tier ---
+# Pinned to 1.6.1: the newest CrewAI release whose pydantic constraint
+# (pydantic>=2.11.9, no upper bound) is still compatible with daytona's
+# pydantic>=2.13.4 floor. CrewAI 1.7.0+ tightens to pydantic~=2.11.9 (<2.12)
+# and 1.14.5+ to pydantic<2.13, either of which conflicts with daytona.
+# Verified against the real PyPI metadata (agent/.venv is Python 3.14; every
+# published CrewAI release still declares requires-python <3.14, so
+# installation currently needs `pip install --ignore-requires-python` until
+# CrewAI ships 3.14 support upstream).
+crewai==1.6.1
+
 # --- OpenTelemetry core (always installed) ---
 opentelemetry-api>=1.27.0
 opentelemetry-sdk>=1.27.0

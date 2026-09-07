@@ -61,6 +61,8 @@ def init_metrics(resource, extra_readers=None) -> None:
         "snapshot_backfilled": _meter.create_counter("agent.snapshot.backfilled"),
         "snapshot_field_missing": _meter.create_counter("agent.snapshot.field_missing"),
         "snapshot_completeness": _meter.create_histogram("agent.snapshot.completeness"),
+        "crew_run_duration_ms": _meter.create_histogram("crew.run.duration_ms", unit="ms"),
+        "crew_agent_tokens": _meter.create_histogram("crew.agent.tokens"),
     }
 
     _sentry_metrics_enabled = bool(os.environ.get("SENTRY_DSN_AGENT"))
@@ -198,6 +200,18 @@ def record_snapshot_completeness(populated: int, ticker: str) -> None:
     attrs = {"ticker": ticker}
     _hist("snapshot_completeness", populated, attrs)
     _sentry_dist("agent.snapshot.completeness", populated, attrs)
+
+
+def record_crew_run_duration(final_status: str, ticker: str, depth: str, duration_ms: float) -> None:
+    attrs = {"final_status": final_status, "ticker": ticker, "depth": depth}
+    _hist("crew_run_duration_ms", duration_ms, attrs)
+    _sentry_dist("crew.run.duration_ms", duration_ms, attrs)
+
+
+def record_crew_agent_tokens(agent_role: str, tokens: int, ticker: str) -> None:
+    attrs = {"agent_role": agent_role, "ticker": ticker}
+    _hist("crew_agent_tokens", tokens, attrs)
+    _sentry_dist("crew.agent.tokens", tokens, attrs)
 
 
 # --- httpx event hooks + instrumented client factory ---
