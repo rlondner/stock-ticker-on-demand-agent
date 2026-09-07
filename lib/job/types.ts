@@ -44,6 +44,9 @@ export type SerializedJob = {
     bull_case?: ThesisPoint[];
     bear_case?: ThesisPoint[];
     key_risks?: ThesisPoint[];
+    researcher_findings?: ThesisPoint[];
+    fundamentals_analysis?: ThesisPoint[];
+    risk_analysis?: ThesisPoint[];
     grounding?: string;
     snapshot?: Snapshot | null;
   } | null;

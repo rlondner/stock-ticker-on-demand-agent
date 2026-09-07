@@ -57,6 +57,9 @@ export function InvestmentThesis({
   const bull = result?.bull_case ?? [];
   const bear = result?.bear_case ?? [];
   const risks = result?.key_risks ?? [];
+  const researcherFindings = result?.researcher_findings;
+  const fundamentalsAnalysis = result?.fundamentals_analysis;
+  const riskAnalysis = result?.risk_analysis;
 
   return (
     <section className="space-y-6">
@@ -83,6 +86,15 @@ export function InvestmentThesis({
         <ThesisSection title="Bull Case" points={bull} accent="text-af-secondary" />
         <ThesisSection title="Bear Case" points={bear} accent="text-af-error" />
       </div>
+      {researcherFindings && (
+        <ThesisSection title="Researcher Findings" points={researcherFindings} accent="text-af-secondary" />
+      )}
+      {fundamentalsAnalysis && (
+        <ThesisSection title="Fundamentals Analysis" points={fundamentalsAnalysis} accent="text-af-secondary" />
+      )}
+      {riskAnalysis && (
+        <ThesisSection title="Risk Analysis" points={riskAnalysis} accent="text-af-signal-hold" />
+      )}
       <ThesisSection title="Key Risks" points={risks} accent="text-af-signal-hold" />
     </section>
   );
