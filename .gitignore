@@ -32,3 +32,6 @@ agent/.runs/
 /.env
 anthropic_models.json
 .gstack/
+
+# Git worktrees
+.worktrees/
