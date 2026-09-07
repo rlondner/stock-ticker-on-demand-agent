@@ -6,6 +6,7 @@ from opentelemetry import trace
 from lib.observability import init_observability, flush_observability, record_error, emit_log, get_host
 from lib.db import get_job, mark_running, mark_complete, mark_failed
 from lib.llm import run_analysis
+from lib.crew import run_crew_analysis
 import lib.metrics as _metrics
 from lib.self_delete import self_delete
 
@@ -69,7 +70,12 @@ def main() -> None:
             span.set_attribute("ticker", job["ticker"])
 
             mark_running(JOB_ID)
-            result = run_analysis(ticker=job["ticker"])
+            depth = job.get("depth") or "quick"
+            span.set_attribute("depth", depth)
+            if depth in ("deep", "full"):
+                result = run_crew_analysis(ticker=job["ticker"], depth=depth, sandbox_id=job.get("sandbox_id"))
+            else:
+                result = run_analysis(ticker=job["ticker"])
             mark_complete(JOB_ID, recommendation=result["recommendation"], result=result)
             span.set_attribute("final_status", "complete")
             final_status = "complete"

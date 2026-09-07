@@ -112,6 +112,52 @@ def test_main_writes_failed_on_llm_error(neon_url, fresh_job, monkeypatch):
     assert "LLM blew up" in row[1]
 
 
+def test_main_dispatches_to_run_analysis_for_quick_depth(monkeypatch):
+    import agent
+    monkeypatch.setenv("JOB_ID", "job-quick")
+    monkeypatch.setattr(agent, "JOB_ID", "job-quick")
+    monkeypatch.setattr(agent, "get_job", lambda jid: {"status": "pending", "ticker": "MDB", "depth": "quick", "sandbox_id": None})
+    monkeypatch.setattr(agent, "mark_running", lambda jid: None)
+    calls = {}
+
+    def _fake_run_analysis(ticker):
+        calls["quick"] = ticker
+        return {"recommendation": "buy"}
+
+    def _fake_run_crew_analysis(**kw):
+        calls["crew"] = kw
+        return {"recommendation": "buy"}
+
+    monkeypatch.setattr(agent, "run_analysis", _fake_run_analysis)
+    monkeypatch.setattr(agent, "run_crew_analysis", _fake_run_crew_analysis)
+    monkeypatch.setattr(agent, "mark_complete", lambda *a, **kw: None)
+    agent.main()
+    assert calls == {"quick": "MDB"}
+
+
+def test_main_dispatches_to_run_crew_analysis_for_deep_depth(monkeypatch):
+    import agent
+    monkeypatch.setenv("JOB_ID", "job-deep")
+    monkeypatch.setattr(agent, "JOB_ID", "job-deep")
+    monkeypatch.setattr(agent, "get_job", lambda jid: {"status": "pending", "ticker": "MDB", "depth": "deep", "sandbox_id": "sb-1"})
+    monkeypatch.setattr(agent, "mark_running", lambda jid: None)
+    calls = {}
+
+    def _fake_run_analysis(ticker):
+        calls["quick"] = ticker
+        return {"recommendation": "buy"}
+
+    def _fake_run_crew_analysis(ticker, depth, sandbox_id):
+        calls["crew"] = (ticker, depth, sandbox_id)
+        return {"recommendation": "buy"}
+
+    monkeypatch.setattr(agent, "run_analysis", _fake_run_analysis)
+    monkeypatch.setattr(agent, "run_crew_analysis", _fake_run_crew_analysis)
+    monkeypatch.setattr(agent, "mark_complete", lambda *a, **kw: None)
+    agent.main()
+    assert calls == {"crew": ("MDB", "deep", "sb-1")}
+
+
 def _fake_snapshot() -> Snapshot:
     return Snapshot(
         company_name="MongoDB, Inc.",
