@@ -864,7 +864,7 @@ git commit -m "feat(agent): add Daytona code-exec tool for custom ratio computat
 - Test: `agent/tests/test_llm.py`
 
 **Interfaces:**
-- Produces: `Thesis` gains `researcher_findings: list[ThesisPoint] = []`, `fundamentals_analysis: list[ThesisPoint] = []`, `risk_analysis: list[ThesisPoint] = []` (defaulted, so today's quick-tier JSON — which never includes these keys — still parses unchanged).
+- Produces: `Thesis` gains `researcher_findings: list[ThesisPoint] = []`, `fundamentals_analysis: list[ThesisPoint] = []`, `risk_analysis: list[ThesisPoint] = []` (defaulted, so today's quick-tier JSON — which never includes these keys — still parses unchanged). `run_analysis`'s returned dict must NOT include these three keys (see Step 5 — a caught regression: `Thesis.model_dump()` always emits every field, so without this exclusion every quick-tier job would get `researcher_findings: []` etc. written to `result`, and `InvestmentThesis` renders a present-but-empty array as a visible "None provided." box instead of hiding the section — see Task 4's discussion of the absent-vs-empty-array distinction).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -888,12 +888,31 @@ def test_thesis_accepts_deep_tier_fields_when_present():
     assert len(t.researcher_findings) == 1
     assert len(t.fundamentals_analysis) == 1
     assert len(t.risk_analysis) == 1
+
+
+def test_run_analysis_omits_deep_tier_keys(monkeypatch):
+    """Regression test: run_analysis (quick tier) must not emit
+    researcher_findings/fundamentals_analysis/risk_analysis at all, since a
+    present-but-empty list renders a visible (wrong) 'None provided.' section
+    in InvestmentThesis, unlike a genuinely absent key."""
+    import lib.llm as llm_module
+
+    class _FakeClient:
+        def analyze(self, ticker, snapshot=None):
+            return parse_thesis(_THESIS_JSON)
+
+    monkeypatch.setattr(llm_module, "fetch_snapshot", lambda ticker: None)
+    monkeypatch.setattr(llm_module, "OpenAIClient", _FakeClient)
+    result = llm_module.run_analysis("MDB")
+    assert "researcher_findings" not in result
+    assert "fundamentals_analysis" not in result
+    assert "risk_analysis" not in result
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cd agent && .venv/bin/pytest tests/test_llm.py -k deep_tier -v`
-Expected: FAIL — `AttributeError`/`ValidationError`, the fields don't exist on `Thesis`.
+Run: `cd agent && .venv/bin/pytest tests/test_llm.py -k "deep_tier or run_analysis_omits" -v`
+Expected: FAIL — `AttributeError`/`ValidationError` for the first two (the fields don't exist on `Thesis` yet); the third fails because the keys aren't excluded yet (in fact `run_analysis` can't even be called this way until Step 3 lands — if it errors instead of failing the assertion, that also counts as "fails," per TDD's red step).
 
 - [ ] **Step 3: Implement**
 
@@ -904,6 +923,35 @@ In `agent/lib/llm.py`, in the `Thesis` class, add after `key_risks: list[ThesisP
     fundamentals_analysis: list[ThesisPoint] = Field(default_factory=list)
     risk_analysis: list[ThesisPoint] = Field(default_factory=list)
 ```
+
+Then find `run_analysis` near the bottom of the same file:
+
+```python
+def run_analysis(ticker: str) -> dict:
+    snapshot = fetch_snapshot(ticker)
+    client: LLMClient = OpenAIClient()
+    thesis = client.analyze(ticker, snapshot=snapshot)
+    return {
+        **thesis.model_dump(),
+        "snapshot": snapshot.model_dump() if snapshot else None,
+    }
+```
+
+Change the `thesis.model_dump()` call to exclude the three deep-tier-only fields, since quick tier never populates them and must not emit an empty-but-present array for them:
+
+```python
+def run_analysis(ticker: str) -> dict:
+    snapshot = fetch_snapshot(ticker)
+    client: LLMClient = OpenAIClient()
+    thesis = client.analyze(ticker, snapshot=snapshot)
+    data = thesis.model_dump(exclude={"researcher_findings", "fundamentals_analysis", "risk_analysis"})
+    return {
+        **data,
+        "snapshot": snapshot.model_dump() if snapshot else None,
+    }
+```
+
+(`run_crew_analysis` in Task 8 does NOT exclude these fields — it always populates them with real content, so `model_dump()` there is unchanged/unfiltered.)
 
 - [ ] **Step 4: Run tests to verify they pass**
 
