@@ -1,8 +1,10 @@
 import { StatusPill } from "@/components/ui/status-pill";
 import { SignalPill } from "@/components/ui/signal-pill";
+import { NotifyPill } from "@/components/ui/notify-pill";
 import type { JobStatus } from "@/lib/ui/status-pill";
 import type { Recommendation } from "@/lib/ui/signal-pill";
 import type { Snapshot } from "@/lib/job/types";
+import type { NotifyChannel } from "@/lib/db/schema";
 import { formatPrice, formatChangePct } from "@/lib/ui/format-price";
 
 type Props = {
@@ -11,6 +13,8 @@ type Props = {
   recommendation: Recommendation | null;
   summary: string | null;
   snapshot: Snapshot | null;
+  notifyChannel: NotifyChannel | null;
+  notifiedAt: string | null;
 };
 
 const TONE_CLASS = {
@@ -19,7 +23,7 @@ const TONE_CLASS = {
   neutral: "text-af-on-surface-variant",
 } as const;
 
-export function StockHeader({ ticker, status, recommendation, summary, snapshot }: Props) {
+export function StockHeader({ ticker, status, recommendation, summary, snapshot, notifyChannel, notifiedAt }: Props) {
   const displayName = snapshot?.company_name ?? ticker;
   const currency = snapshot?.currency ?? "USD";
   const priceText = formatPrice(snapshot?.close ?? null, currency);
@@ -32,6 +36,7 @@ export function StockHeader({ ticker, status, recommendation, summary, snapshot 
           <h2 className="text-5xl font-bold text-af-on-surface tracking-tight">{ticker}</h2>
           <StatusPill status={status} />
           <SignalPill recommendation={recommendation} />
+          <NotifyPill channel={notifyChannel} notifiedAt={notifiedAt} />
         </div>
         <div>
           <h3 className="text-2xl font-semibold text-af-on-surface">{displayName}</h3>
