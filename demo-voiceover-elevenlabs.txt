@@ -1,0 +1,37 @@
+This is AlphaFlow — a stock analysis app powered by an AI agent that runs in its own sandbox for every single request. Before we push a button, let's look at how the pieces fit together.
+
+Four systems. One loop. A Next.js app on the left, Neon Postgres at the top, a Daytona sandbox in the middle that hosts the AI agent, and an OpenAI-compatible LLM on the right that does the thinking. Watch the flow.
+
+Step one. A ticker leaves the browser for Next.js. A POST hits the jobs endpoint, Zod validates the symbol, and a fresh OpenTelemetry span opens so we can follow the whole workflow later.
+
+Step two. A job row is written into Neon Postgres. A Drizzle INSERT with status equals pending, and the row's ID is returned to the API. This row becomes the single source of truth for the entire workflow — every actor in the diagram will read from it or write to it.
+
+Step three. The API asks Daytona to boot the AI agent. A fresh sandbox spins up from the stock-agent v1 snapshot. Daytona injects the environment the agent will need — the Neon database URL, the OpenAI API key, the job ID, and a trace-parent header, so the sandbox joins the same distributed trace. Then the API gets out of the way. No polling, no keep-alive. The agent takes it from here.
+
+Step four. The AI agent reads its job row from Neon. Inside the sandbox, the agent process starts. It connects back to Neon using the connection string it was handed, selects its own job row, flips the status to running, and hydrates the ticker. Neon is the sandbox's memory.
+
+Step five. The agent calls an OpenAI-compatible LLM. Using the OpenAI SDK, it hands the model a set of yfinance tools — snapshot and signals — for real-time price data, analyst opinions, business summaries. The model calls those tools, reasons over the data, and returns a structured recommendation. The AI agent runs the tool loop. The LLM does the reasoning. Two distinct systems, one clean handoff.
+
+Step six. The agent writes the verdict back to Neon. An UPDATE sets the status to complete and stores the full result as JSON — recommendation, signals, market snapshot. The sandbox has done its job.
+
+Step seven. The browser polls and the row becomes UI. A GET to the status endpoint fires every two and a half seconds. The moment the row flips to complete, the next poll returns the full JSON payload. The UI unfolds live — headline, price, insights — all rendered from that one row in Neon.
+
+Step eight. Daytona collects the sandbox. Neon keeps the row. Ten minutes after creation, Daytona quietly deletes the sandbox. The AI agent is ephemeral — one job, one sandbox, one clean lifecycle. Durable state persists in Postgres. The loop is closed.
+
+Now let's watch it happen for real.
+
+Here's the app. Recent activity on the right shows past analyses — each one was its own sandbox, each one wrote back to the same Neon database. Let's kick off a new one.
+
+One field: a ticker symbol. I'll pick a well-known one — let's do N V D A.
+
+That single click just triggered steps one through three from the architecture diagram — the API validated the ticker, wrote a pending row to Neon, and asked Daytona to boot a fresh AI agent.
+
+We're now on the job page. The status is Running. The sandbox ID at the top is the actual live Daytona sandbox — you could open it in the Daytona dashboard right now and watch the Python agent make its LLM calls in real time.
+
+There it is. The status just flipped to Complete. The header is showing the live price and the AI's overall recommendation. The insights on the right are pulled straight from the model's structured output.
+
+And on the left, the raw JSON the AI agent wrote back to Neon. This is the exact payload sitting in the database right now — recommendation, summary, signals, and the market snapshot the agent used to make its call.
+
+One request. Four systems. An AI agent that lives just long enough to think, an LLM that does the reasoning, and a durable row in Neon that outlives them both. That's the agentic workflow behind AlphaFlow. 
+
+I hope that helps you to build your transient AI agents!

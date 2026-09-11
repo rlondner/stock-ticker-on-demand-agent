@@ -34,3 +34,4 @@ anthropic_models.json
 .gstack/
 .agents/
 .claude/skills
+videos/
